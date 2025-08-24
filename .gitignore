@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+*.venv/
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+docker-compose.override.yml
+*.env.local
+
+# Logs
+*.log
+
+# Test & coverage
+.coverage
+htmlcov/
+*.pytest_cache/
+*.cache/
+.pytest_cache/
+
+# Misc
+*.sqlite3
+*.db
+*.bak
