@@ -1,10 +1,33 @@
-from langchain_core.runnables.config import RunnableConfig
-from langchain_core.messages import HumanMessage
+# app_debug.py
+from dotenv import load_dotenv
+load_dotenv()  # load variables from .env into process env
+
 from supervisor.supervisor import get_graph
+from langchain_core.messages import HumanMessage
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.runnables.config import RunnableConfig
 
 graph = get_graph()
 
+def print_last_message(state):
+    msgs = state.get("messages", [])
+    if msgs:
+        last = msgs[-1]
+        content = getattr(last, "content", str(last))
+        print("STREAM MESSAGE:", content)
+
+print("=== Stream values (state after each step) ===")
+for value_state in graph.stream({"messages": [HumanMessage(content="Do X then Y")]}, stream_mode="values"):
+    print_last_message(value_state)
+
+print("\n=== Stream messages (LLM/tokens) ===")
+for chunk, meta in graph.stream({"messages": [HumanMessage(content="Summarize PDF then email")]}, stream_mode="messages"):
+    if isinstance(chunk, str):
+        print("TOKEN:", chunk, end="", flush=True)
+    else:
+        print("\nMESSAGE:", getattr(chunk, "content", str(chunk)))
+
+print("\n\n=== Invoke with callbacks ===")
 class LogAll(BaseCallbackHandler):
     def on_tool_start(self, serialized, input_str, **kwargs):
         print(f"[TOOL START] {serialized.get('name') or serialized.get('id')} args={input_str}")
@@ -21,16 +44,5 @@ class LogAll(BaseCallbackHandler):
         print("[LLM END] usage:", usage)
 
 config: RunnableConfig = {"callbacks": [LogAll()], "run_name": "supervisor_run"}
-
-# Stream values
-for state in graph.stream({"messages": [HumanMessage("Do X then Y")]},
-                          config=config,
-                          stream_mode="values"):
-    msgs = state.get("messages", [])
-    if msgs:
-        print("STREAM MESSAGE:", getattr(msgs[-1], "content", str(msgs[-1])))
-
-# Invoke with callbacks
-out = graph.invoke({"messages": [HumanMessage("Plan a report from DB and send via email")]},
-                   config=config)
-print("FINAL:", getattr(out.get("messages", [])[-1], "content", out))
+out = graph.invoke({"messages": [HumanMessage(content="Plan a report from DB and send via email")]}, config=config)
+print("\nFINAL:", getattr(out.get("messages", [])[-1], "content", out))
