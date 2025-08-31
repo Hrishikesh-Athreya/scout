@@ -1,0 +1,47 @@
+[
+  {
+    "name": "send_email",
+    "description": "Send an email via the Email API",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "to": {"type": "string"},
+        "subject": {"type": "string"},
+        "body": {"type": "string"}
+      },
+      "required": ["to", "subject", "body"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "POST",
+      "url": "https://api.examplemail.com/v1/send",
+      "headers": {
+        "Authorization": "Bearer ${EMAIL_API_KEY}",
+        "Content-Type": "application/json"
+      },
+      "body_map": {}
+    }
+  },
+  {
+    "name": "send_slack_message",
+    "description": "Send a Slack message to a channel",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "channel": {"type": "string"},
+        "text": {"type": "string"}
+      },
+      "required": ["channel", "text"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "POST",
+      "url": "https://slack.com/api/chat.postMessage",
+      "headers": {
+        "Authorization": "Bearer ${SLACK_BOT_TOKEN}",
+        "Content-Type": "application/json"
+      },
+      "body_map": {}
+    }
+  }
+]

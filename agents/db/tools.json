@@ -1,0 +1,72 @@
+[
+  {
+    "name": "db_fetch_rows",
+    "description": "Fetch rows from a dataset by URL with query params like filters, limit, and order.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "base_url": { "type": "string", "description": "Endpoint base, e.g., https://db.example.com/sales" },
+        "filters": { "type": "object", "description": "Key-value filters, e.g., {\"region\":\"NA\"}" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "order_by": { "type": "string", "description": "Column to order by, optionally with DESC" }
+      },
+      "required": ["base_url"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "GET",
+      "url": "${BASE_URL_OVERRIDE:-}",
+      "headers": { "Authorization": "Bearer ${DB_API_TOKEN}" },
+      "query_map": {
+        "filters": "filters",
+        "limit": "limit",
+        "order_by": "order_by",
+        "base_url": "__ignored__"
+      }
+    }
+  },
+  {
+    "name": "db_query_by_url",
+    "description": "Query a resource by full URL and params; returns JSON rows.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "params": { "type": "object", "description": "Query dict appended to URL" }
+      },
+      "required": ["url"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "GET",
+      "url": "${DB_QUERY_BASE:-}",
+      "headers": { "Authorization": "Bearer ${DB_API_TOKEN}" },
+      "query_map": { "params": "params", "url": "__ignored__" }
+    }
+  },
+  {
+    "name": "db_aggregate",
+    "description": "Compute simple aggregates at the API (sum/count/avg) if supported.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "endpoint": { "type": "string" },
+        "group_by": { "type": "string" },
+        "metric": { "type": "string", "enum": ["sum","avg","count","min","max"] },
+        "field": { "type": "string" },
+        "filters": { "type": "object" }
+      },
+      "required": ["endpoint","metric","field"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "POST",
+      "url": "https://db.example.com/aggregate",
+      "headers": {
+        "Authorization": "Bearer ${DB_API_TOKEN}",
+        "Content-Type": "application/json"
+      },
+      "body_map": {}
+    }
+  }
+]

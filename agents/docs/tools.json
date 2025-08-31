@@ -1,0 +1,40 @@
+[
+  {
+    "name": "pdf_extract_text",
+    "description": "Extract text from a PDF by URL",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pdf_url": {"type":"string"},
+        "pages": {"type":"string", "description":"Page ranges like 1-3,5"}
+      },
+      "required": ["pdf_url"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "POST",
+      "url": "https://api.examplepdf.com/v1/extract",
+      "headers": { "Authorization": "Bearer ${PDF_API_KEY}" },
+      "body_map": {}
+    }
+  },
+  {
+    "name": "pdf_redact",
+    "description": "Redact sensitive text in a PDF and return a new file URL",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pdf_url": {"type":"string"},
+        "pattern": {"type":"string"}
+      },
+      "required": ["pdf_url","pattern"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "POST",
+      "url": "https://api.examplepdf.com/v1/redact",
+      "headers": { "Authorization": "Bearer ${PDF_API_KEY}" },
+      "body_map": {}
+    }
+  }
+]
