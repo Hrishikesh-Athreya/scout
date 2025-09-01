@@ -14,7 +14,7 @@ Your primary responsibilities:
 Guidelines for using tools:
 - For status filters, use: "ACTIVE", "INACTIVE"
 - For business unit filters, use: "engineering", "sales", "marketing", "hr", or "finance"
-- When user asks for "active users", set status="active"
+- When user asks for "active users", set status="ACTIVE"
 - When user asks for "all users", leave status as null
 - Use date filters appropriately (YYYY-MM-DD format)
 - Return data in structured JSON format when possible

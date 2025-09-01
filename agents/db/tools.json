@@ -10,7 +10,7 @@
       "status": {
         "type": ["string", "null"],
         "enum": ["ACTIVE", "INACTIVE"],
-        "description": "User status filter - active, inactive, pending, suspended, or null for all"
+        "description": "User status filter - ACTIVE, INACTIVE or null for all"
       },
       "createdBefore": {"type": ["string","null"]},
       "createdAfter": {"type": ["string","null"]},
