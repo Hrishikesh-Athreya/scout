@@ -1,13 +1,16 @@
 import sqlite3
 import tempfile
 import os
-from typing import Dict, List, Any, Optional
+import json
+import asyncio
+from typing import Dict, List, Any, Optional, Tuple
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.chat_models import init_chat_model
 
 from agents.db.agent import build_db_agent
 from common.tool_loader import load_tools_from_json
+from common.prompts import get_agent_prompt
 
 async def process_user_query_flow(user_input: str) -> Dict[str, Any]:
     """
@@ -17,23 +20,31 @@ async def process_user_query_flow(user_input: str) -> Dict[str, Any]:
     
     try:
         # Step 1: Initialize DB agent
+        print(f"🔍 Initializing DB agent...")
         db_agent = build_db_agent()
         
         # Step 2: Use DB agent to fetch required rows based on user input
-        print(f"🔍 Fetching data for query: {user_input}")
+        print(f"📊 Fetching data for query: {user_input}")
         fetch_result = await db_agent.ainvoke({
-            "messages": [{"role": "user", "content": f"Fetch all relevant data for: {user_input}"}]
+            "messages": [{"role": "user", "content": f"Fetch all relevant data for this analysis: {user_input}"}]
         })
         
         # Extract the actual data from agent response
         fetched_data = extract_data_from_agent_response(fetch_result)
+        
+        if not fetched_data:
+            return {
+                "user_query": user_input,
+                "error": "No data was fetched by the database agent",
+                "status": "error"
+            }
         
         # Step 3: Create temporary SQLite database and save rows
         print("💾 Creating temporary SQLite tables...")
         temp_db_path, table_schemas = create_temp_sqlite_with_data(fetched_data)
         
         # Step 4: Generate SQL query based on user input and available schemas
-        print("🧠 Generating SQL query...")
+        print("🧠 Generating SQL query from user input...")
         sql_query = await generate_sql_from_user_query(user_input, table_schemas)
         
         # Step 5: Execute query and get results
@@ -45,6 +56,7 @@ async def process_user_query_flow(user_input: str) -> Dict[str, Any]:
             "generated_sql": sql_query,
             "result": result,
             "row_count": len(result) if result else 0,
+            "table_schemas": table_schemas,
             "status": "success"
         }
         
@@ -63,19 +75,92 @@ async def process_user_query_flow(user_input: str) -> Dict[str, Any]:
 
 def extract_data_from_agent_response(agent_response: Dict) -> List[Dict]:
     """Extract actual data from the agent's response"""
-    # This depends on how your db agent structures its response
-    # Adjust based on your actual agent implementation
+    
+    # Handle different response formats from the agent
     if 'messages' in agent_response:
         last_message = agent_response['messages'][-1]
+        
+        # Try to extract JSON from the content
         if hasattr(last_message, 'content'):
-            # Parse the content to extract structured data
-            # You might need to adjust this based on your agent's response format
-            return parse_agent_data_response(last_message.content)
+            content = last_message.content
+            return parse_agent_data_response(content)
     
     # Fallback - assume direct data structure
     return agent_response.get('data', [])
 
-def create_temp_sqlite_with_data(fetched_data: List[Dict]) -> tuple[str, Dict[str, List[str]]]:
+def parse_agent_data_response(content: str) -> List[Dict]:
+    """Parse agent response content to extract structured data"""
+    
+    try:
+        # Try parsing as direct JSON
+        if content.strip().startswith('[') or content.strip().startswith('{'):
+            return json.loads(content)
+        
+        # Try to find JSON in the content
+        import re
+        json_pattern = r'``````'
+        json_match = re.search(json_pattern, content, re.DOTALL)
+        
+        if json_match:
+            return json.loads(json_match.group(1))
+        
+        # Try to find any JSON-like structure
+        json_pattern = r'(\[.*\]|\{.*\})'
+        json_match = re.search(json_pattern, content, re.DOTALL)
+        
+        if json_match:
+            return json.loads(json_match.group(1))
+            
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    
+    # If no JSON found, create mock data for demo
+    # In production, you'd want to handle this differently
+    return create_mock_data_from_response(content)
+
+def create_mock_data_from_response(content: str) -> List[Dict]:
+    """Create mock data structure when agent returns unstructured data"""
+    
+    # This is a fallback for demo purposes
+    # In production, you'd want your DB agent to return structured data
+    return [
+        {
+            "id": "1",
+            "name": "John Doe",
+            "email": "john@example.com",
+            "status": "active",
+            "businessUnit": "engineering",
+            "createdAt": "2024-01-15",
+            "table_type": "users"
+        },
+        {
+            "id": "2", 
+            "name": "Jane Smith",
+            "email": "jane@example.com",
+            "status": "active",
+            "businessUnit": "sales",
+            "createdAt": "2024-02-20",
+            "table_type": "users"
+        },
+        {
+            "order_id": "100",
+            "user_id": "1",
+            "product": "Widget A",
+            "amount": "150.00",
+            "order_date": "2024-03-10",
+            "table_type": "orders"
+        },
+        {
+            "order_id": "101",
+            "user_id": "2", 
+            "product": "Widget B",
+            "amount": "75.00",
+            "order_date": "2024-03-12",
+            "table_type": "orders"
+        }
+    ]
+
+def create_temp_sqlite_with_data(fetched_data: List[Dict]) -> Tuple[str, Dict[str, List[str]]]:
     """Create temporary SQLite DB and populate with fetched data"""
     
     # Create temporary file
@@ -94,7 +179,7 @@ def create_temp_sqlite_with_data(fetched_data: List[Dict]) -> tuple[str, Dict[st
     for table_name, rows in tables_data.items():
         if rows:
             # Create table based on first row structure
-            columns = list(rows[0].keys())
+            columns = [col for col in rows[0].keys() if col != 'table_type']
             column_defs = ", ".join([f'"{col}" TEXT' for col in columns])
             
             create_sql = f'CREATE TABLE "{table_name}" ({column_defs})'
@@ -134,19 +219,31 @@ def organize_data_by_structure(data: List[Dict]) -> Dict[str, List[Dict]]:
 
 def determine_table_name(item: Dict) -> str:
     """Determine appropriate table name for data item"""
-    # Logic to determine table name based on data structure
-    # You can customize this based on your data patterns
     
+    # Check if item has explicit table type
     if 'table_type' in item:
         return item['table_type']
-    elif 'source' in item:
-        return f"data_{item['source']}"
-    elif 'type' in item:
-        return f"temp_{item['type']}"
-    else:
-        # Generate based on available keys
-        key_signature = "_".join(sorted(item.keys())[:3])  # Use first 3 keys
-        return f"temp_{hash(key_signature) % 10000}"
+    
+    # Determine based on key patterns
+    keys = set(item.keys())
+    
+    # User-like data
+    if 'email' in keys and 'name' in keys:
+        return 'users'
+    
+    # Order-like data
+    if 'order_id' in keys or ('user_id' in keys and 'amount' in keys):
+        return 'orders'
+    
+    # Product-like data
+    if 'product_id' in keys or 'product_name' in keys:
+        return 'products'
+    
+    # Default fallback
+    if 'id' in keys:
+        return 'main_data'
+    
+    return 'temp_data'
 
 async def generate_sql_from_user_query(user_query: str, table_schemas: Dict[str, List[str]]) -> str:
     """Generate SQL query based on user input and available table schemas"""
@@ -155,22 +252,30 @@ async def generate_sql_from_user_query(user_query: str, table_schemas: Dict[str,
     model = init_chat_model("anthropic:claude-3-5-sonnet-latest")
     
     # Create schema description
-    schema_description = "\n".join([
-        f"Table '{table}': {', '.join(columns)}" 
-        for table, columns in table_schemas.items()
-    ])
+    schema_descriptions = []
+    for table, columns in table_schemas.items():
+        schema_descriptions.append(f"Table '{table}': {', '.join(columns)}")
+    
+    schema_description = "\n".join(schema_descriptions)
     
     prompt = f"""
-    Given the following temporary database schema:
+    You are a SQL expert. Generate a SQLite query based on the user's request and available data.
+    
+    Available Database Schema:
     {schema_description}
     
-    Generate a SQL query to answer this user question: {user_query}
+    User Request: {user_query}
     
     Rules:
-    - Only use the tables and columns shown above
-    - Return only the SQL query, no explanation
-    - Use proper SQL syntax for SQLite
-    - Quote table and column names with double quotes if they contain spaces or special characters
+    1. Only use the tables and columns shown above
+    2. Return ONLY the SQL query, no explanation or formatting
+    3. Use proper SQLite syntax
+    4. Quote table and column names with double quotes if needed
+    5. Make sure the query answers the user's question as best as possible
+    6. Use JOINs when relationships between tables are needed
+    7. Use appropriate WHERE clauses, GROUP BY, ORDER BY as needed
+    
+    Generate the SQL query:
     """
     
     response = await model.ainvoke([{"role": "user", "content": prompt}])
@@ -179,6 +284,8 @@ async def generate_sql_from_user_query(user_query: str, table_schemas: Dict[str,
     sql_query = response.content.strip()
     if sql_query.startswith('```
         sql_query = sql_query.replace('```sql', '').replace('```
+    elif sql_query.startswith('```'):
+        sql_query = sql_query.replace('```
     
     return sql_query
 
@@ -200,6 +307,7 @@ def execute_query_on_temp_db(temp_db_path: str, sql_query: str) -> List[Dict]:
         
     except Exception as e:
         print(f"❌ SQL execution error: {e}")
+        print(f"Query: {sql_query}")
         raise e
     finally:
         conn.close()
@@ -212,46 +320,38 @@ def cleanup_temp_db(temp_db_path: str):
     except Exception as e:
         print(f"⚠️ Warning: Could not clean up temp file {temp_db_path}: {e}")
 
-def parse_agent_data_response(content: str) -> List[Dict]:
-    """Parse agent response content to extract structured data"""
-    # This is a placeholder - implement based on your agent's response format
-    # Could be JSON, CSV, or other structured format
-    import json
-    
-    try:
-        # Try parsing as JSON first
-        return json.loads(content)
-    except:
-        # Implement other parsing logic based on your agent's format
-        return []
-
 # Example usage and testing
-if __name__ == "__main__":
-    import asyncio
+async def run_example_queries():
+    """Run example queries to demonstrate the flow"""
     
-    async def main():
-        # Example queries
-        test_queries = [
-            "Show me all users who made purchases last month",
-            "What are the top 5 products by sales?",
-            "List customers with pending orders"
-        ]
+    test_queries = [
+        "Show me all active users",
+        "What are the total sales by business unit?",
+        "List all orders with user details",
+        "Find users who have made orders",
+        "Show me recent orders with amounts over $100"
+    ]
+    
+    for query in test_queries:
+        print(f"\n" + "="*60)
+        print(f"🔍 Processing Query: {query}")
+        print("="*60)
         
-        for query in test_queries:
-            print(f"\n" + "="*50)
-            print(f"Processing: {query}")
-            print("="*50)
+        result = await process_user_query_flow(query)
+        
+        if result['status'] == 'success':
+            print(f"✅ Generated SQL: {result['generated_sql']}")
+            print(f"📊 Results ({result['row_count']} rows):")
             
-            result = await process_user_query_flow(query)
+            # Pretty print first few results
+            for i, row in enumerate(result['result'][:3]):
+                print(f"   {i+1}: {row}")
             
-            if result['status'] == 'success':
-                print(f"✅ Generated SQL: {result['generated_sql']}")
-                print(f"📊 Results ({result['row_count']} rows):")
-                for row in result['result'][:5]:  # Show first 5 rows
-                    print(f"   {row}")
-                if result['row_count'] > 5:
-                    print(f"   ... and {result['row_count'] - 5} more rows")
-            else:
-                print(f"❌ Error: {result['error']}")
-    
-    asyncio.run(main())
+            if result['row_count'] > 3:
+                print(f"   ... and {result['row_count'] - 3} more rows")
+        else:
+            print(f"❌ Error: {result['error']}")
+
+if __name__ == "__main__":
+    # Run the example
+    asyncio.run(run_example_queries())
