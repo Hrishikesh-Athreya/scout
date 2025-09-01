@@ -3,56 +3,271 @@ import tempfile
 import os
 import json
 import asyncio
-from typing import Dict, List, Any, Optional, Tuple
+import time
+import re
+from typing import Dict, List, Any
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
+import requests
+import dotenv
 
-from agents.db.agent import build_db_agent
+dotenv.load_dotenv()
 
-async def process_user_query_flow(user_input: str) -> Dict[str, Any]:
+class DynamicToolExecutor:
+    def __init__(self, tools_json_path: str):
+        """Load tools from JSON and create dynamic execution capabilities"""
+        with open(tools_json_path, 'r') as f:
+            self.tools_config = json.load(f)
+        self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+        
+    async def analyze_user_query(self, user_query: str) -> List[Dict[str, Any]]:
+        """Use LLM to determine which tools to use and what parameters"""
+        
+        tools_description = json.dumps(self.tools_config, indent=2)
+        
+        prompt = f"""
+You are an expert system that analyzes user queries and determines which tools to use.
+
+Available Tools:
+{tools_description}
+
+User Query: "{user_query}"
+
+Analyze the query and respond with a JSON array of tool calls needed to fulfill this request.
+Each tool call should have:
+- "tool": the exact tool name from the available tools
+- "params": object with parameter names and values extracted from the user query
+
+Rules:
+1. Only use tools that exist in the available tools list
+2. Extract parameter values intelligently from the user query
+3. Use the DB tool if no other tool fits
+
+Example response:
+[
+  {{"tool": "db_get_users", "params": {{"status": "ACTIVE", "businessUnit": "engineering"}}}}
+]
+
+Respond with only the JSON array, no other text:
+"""
+
+        # print(f"🧠 Prompt: {prompt}...")
+        start_time = time.time()
+        response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+        end_time = time.time()
+        
+        print(f"🪙 Query Analysis Time: {end_time - start_time:.2f}s")
+        
+        # Extract JSON from response
+        content = response.content if hasattr(response, 'content') else str(response)
+        return self._parse_json_response(content)
+    
+    def _parse_json_response(self, content: Any) -> List[Dict[str, Any]]:
+        """Parse JSON from LLM response, handling various formats"""
+        try:
+            # Ensure content is string
+            if not isinstance(content, str):
+                content = str(content)
+            
+            print(f"📝 Raw LLM Response: {content}")
+            # Clean the content
+            content = content.strip()
+            
+            # Remove markdown formatting if present
+            if content.startswith('```json'):
+                content = content.replace('```json', '').strip()
+            elif content.startswith('```'):
+                content = content.replace('```', '').strip()
+            
+            # Try to find JSON in the content
+            json_pattern = r'($$.*$$|\{.*\})'
+            json_match = re.search(json_pattern, content, re.DOTALL)
+            
+            if json_match:
+                json_str = json_match.group(1)
+                result = json.loads(json_str)
+                # Ensure it's a list
+                if isinstance(result, dict):
+                    result = [result]
+                return result
+            else:
+                return []
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ Failed to parse JSON response: {e}")
+            print(f"Content: {content[:200]}...")
+            return []
+        except Exception as e:
+            print(f"❌ Unexpected error parsing JSON: {e}")
+            return []
+    
+    def execute_tool(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a tool with given parameters"""
+        
+        # Find tool configuration
+        tool_config = None
+        for config in self.tools_config:
+            if config['name'] == tool_name:
+                tool_config = config
+                break
+        
+        if not tool_config:
+            return {"error": f"Tool {tool_name} not found"}
+        
+        execution_info = tool_config.get('execution', {})
+        method = execution_info.get('method', 'GET').upper()
+        url = execution_info.get('url', '')
+        headers = execution_info.get('headers', {})
+        query_map = execution_info.get('query_map', {})
+        timeout = execution_info.get('timeout', 30)
+        
+        # Process environment variable interpolation
+        url = self._interpolate_env_vars(url)
+        headers = {k: self._interpolate_env_vars(v) for k, v in headers.items()}
+        
+        # Map parameters using query_map
+        api_params = {}
+        for param_name, param_value in params.items():
+            if param_value is not None:
+                api_key = query_map.get(param_name, param_name)
+                api_params[api_key] = param_value
+        
+        try:
+            print(f"🔧 Calling {tool_name} with params: {api_params}")
+            
+            if method == 'GET':
+                response = requests.get(url, params=api_params, headers=headers, timeout=timeout)
+            else:
+                response = requests.request(method, url, json=api_params, headers=headers, timeout=timeout)
+            
+            response.raise_for_status()
+            
+            # Try to parse JSON response
+            try:
+                return response.json()
+            except:
+                return {"data": response.text}
+                
+        except requests.RequestException as e:
+            print(f"❌ Tool execution error: {e}")
+            # Return mock data for demo purposes
+            raise Exception(f"Tool execution failed: {e}")
+            return self._get_mock_data(tool_name, params)
+    
+    def _interpolate_env_vars(self, text: str) -> str:
+        """Replace ${VAR_NAME} with environment variables"""
+        if not isinstance(text, str):
+            return text
+        
+        pattern = r'\$\{([^}:]+)(?::([^}]*))?\}'
+        
+        def replacer(match):
+            var_name = match.group(1)
+            default_value = match.group(2) if match.group(2) is not None else ''
+            return os.getenv(var_name, default_value)
+        
+        return re.sub(pattern, replacer, text)
+    
+    def _get_mock_data(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate mock data when API call fails"""
+        
+        if 'users' in tool_name.lower():
+            return {
+                "data": [
+                    {
+                        "id": "1",
+                        "name": "John Doe",
+                        "email": "john.doe@company.com",
+                        "status": "active",
+                        "businessUnit": "engineering",
+                        "createdAt": "2024-01-15T10:30:00Z",
+                        "table_type": "users"
+                    },
+                    {
+                        "id": "2", 
+                        "name": "Jane Smith",
+                        "email": "jane.smith@company.com",
+                        "status": "active",
+                        "businessUnit": "sales",
+                        "createdAt": "2024-02-20T09:15:00Z",
+                        "table_type": "users"
+                    },
+                    {
+                        "id": "3",
+                        "name": "Mike Johnson", 
+                        "email": "mike.johnson@company.com",
+                        "status": "active",
+                        "businessUnit": "marketing",
+                        "createdAt": "2024-03-10T11:00:00Z",
+                        "table_type": "users"
+                    }
+                ]
+            }
+        else:
+            return {"data": [], "message": "No mock data available for this tool"}
+
+async def process_dynamic_query_flow(user_input: str, tools_json_path: str) -> Dict[str, Any]:
     """
-    Complete flow: user input -> db agent -> temp sqlite -> sql generation -> result
+    Complete dynamic flow: user input -> LLM tool selection -> execution -> SQLite -> SQL generation -> results
     """
     temp_db_path = None
     
     try:
-        # Step 1: Initialize DB agent
-        print(f"🔍 Initializing DB agent...")
-        db_agent = build_db_agent()
+        # Step 1: Initialize dynamic tool executor
+        print(f"🔍 Analyzing query with LLM...")
+        executor = DynamicToolExecutor(tools_json_path)
         
-        # Step 2: Use DB agent to fetch required rows based on user input
-        print(f"📊 Fetching data for query: {user_input}")
-        fetch_result = db_agent.invoke({
-            "messages": [HumanMessage(content=f"Fetch all relevant data for this analysis: {user_input}")]
-        })
+        # Step 2: Let LLM determine which tools to use and parameters
+        tool_calls = await executor.analyze_user_query(user_input)
         
-        # Extract the actual data from agent response
-        fetched_data = extract_data_from_agent_response(fetch_result)
-        
-        if not fetched_data:
+        if not tool_calls:
             return {
                 "user_query": user_input,
-                "error": "No data was fetched by the database agent",
+                "error": "LLM could not determine appropriate tool calls",
                 "status": "error"
             }
         
-        # Step 3: Create temporary SQLite database and save rows
-        print("💾 Creating temporary SQLite tables...")
-        temp_db_path, table_schemas = create_temp_sqlite_with_data(fetched_data)
+        print(f"🎯 LLM selected {len(tool_calls)} tool(s): {[call['tool'] for call in tool_calls]}")
         
-        # Step 4: Generate SQL query based on user input and available schemas
-        print("🧠 Generating SQL query from user input...")
-        sql_query = await generate_sql_from_user_query(user_input, table_schemas)
+        # Step 3: Execute all tool calls
+        all_data = []
+        for tool_call in tool_calls:
+            tool_name: str = tool_call.get('tool', '')
+            params = tool_call.get('params', {})
+            
+            result = executor.execute_tool(tool_name, params)
+            
+            # Extract data from result
+            if 'data' in result and isinstance(result['data'], list):
+                all_data.extend(result['data'])
+            elif isinstance(result, list):
+                all_data.extend(result)
         
-        # Step 5: Execute query and get results
-        print("⚡ Executing query on temporary database...")
-        result = execute_query_on_temp_db(temp_db_path, sql_query)
+        if not all_data:
+            return {
+                "user_query": user_input,
+                "error": "No data returned from tool executions",
+                "status": "error"
+            }
+        
+        # Step 4: Create temporary SQLite database with fetched data
+        print(f"💾 Creating SQLite database with {len(all_data)} records...")
+        temp_db_path, table_schemas = create_dynamic_sqlite_tables(all_data)
+        
+        # Step 5: Generate SQL query using LLM based on schema and user query
+        print(f"🧠 Generating SQL query...")
+        sql_query = await generate_dynamic_sql_query(user_input, table_schemas, executor.llm)
+        
+        # Step 6: Execute SQL query
+        print(f"⚡ Executing: {sql_query}")
+        query_results = execute_sql_query(temp_db_path, sql_query)
         
         return {
             "user_query": user_input,
+            "tool_calls": tool_calls,
             "generated_sql": sql_query,
-            "result": result,
-            "row_count": len(result) if result else 0,
+            "result": query_results,
+            "row_count": len(query_results) if query_results else 0,
             "table_schemas": table_schemas,
             "status": "success"
         }
@@ -63,111 +278,16 @@ async def process_user_query_flow(user_input: str) -> Dict[str, Any]:
             "error": str(e),
             "status": "error"
         }
-        
     finally:
-        # Step 6: Clean up temporary database
+        # Step 7: Cleanup
         if temp_db_path:
-            cleanup_temp_db(temp_db_path)
-            print("🗑️ Cleaned up temporary tables")
+            cleanup_temp_database(temp_db_path)
+            print(f"🗑️ Cleaned up temporary database")
 
-def extract_data_from_agent_response(agent_response: Dict) -> List[Dict]:
-    """Extract actual data from the agent's response"""
+def create_dynamic_sqlite_tables(data: List[Dict[str, Any]]) -> tuple:
+    """Create SQLite tables dynamically based on data structure"""
     
-    # Handle different response formats from the agent
-    if 'messages' in agent_response:
-        last_message = agent_response['messages'][-1]
-        
-        # Try to extract JSON from the content
-        if hasattr(last_message, 'content'):
-            content = last_message.content
-            return parse_agent_data_response(content)
-    
-    # Fallback - assume direct data structure or create mock data
-    if 'data' in agent_response:
-        return agent_response['data']
-    
-    # Create mock data for demo
-    return create_mock_data_from_response("")
-
-def parse_agent_data_response(content: Any) -> List[Dict]:
-    """Parse agent response content to extract structured data"""
-    
-    try:
-        # Handle string content
-        if isinstance(content, str):
-            # Try parsing as direct JSON
-            if content.strip().startswith('[') or content.strip().startswith('{'):
-                return json.loads(content)
-            
-            # Try to find JSON in the content
-            import re
-            json_pattern = r'``````'
-            json_match = re.search(json_pattern, content, re.DOTALL)
-            
-            if json_match:
-                return json.loads(json_match.group(1))
-            
-            # Try to find any JSON-like structure
-            json_pattern = r'(\[.*\]|\{.*\})'
-            json_match = re.search(json_pattern, content, re.DOTALL)
-            
-            if json_match:
-                return json.loads(json_match.group(1))
-        
-        # Handle list content
-        elif isinstance(content, list):
-            return content
-            
-    except (json.JSONDecodeError, AttributeError):
-        pass
-    
-    # If no JSON found, create mock data for demo
-    return create_mock_data_from_response(str(content))
-
-def create_mock_data_from_response(content: str) -> List[Dict]:
-    """Create mock data structure when agent returns unstructured data"""
-    
-    return [
-        {
-            "id": "1",
-            "name": "John Doe",
-            "email": "john@example.com",
-            "status": "active",
-            "businessUnit": "engineering",
-            "createdAt": "2024-01-15",
-            "table_type": "users"
-        },
-        {
-            "id": "2", 
-            "name": "Jane Smith",
-            "email": "jane@example.com",
-            "status": "active",
-            "businessUnit": "sales",
-            "createdAt": "2024-02-20",
-            "table_type": "users"
-        },
-        {
-            "order_id": "100",
-            "user_id": "1",
-            "product": "Widget A",
-            "amount": "150.00",
-            "order_date": "2024-03-10",
-            "table_type": "orders"
-        },
-        {
-            "order_id": "101",
-            "user_id": "2", 
-            "product": "Widget B",
-            "amount": "75.00",
-            "order_date": "2024-03-12",
-            "table_type": "orders"
-        }
-    ]
-
-def create_temp_sqlite_with_data(fetched_data: List[Dict]) -> Tuple[str, Dict[str, List[str]]]:
-    """Create temporary SQLite DB and populate with fetched data"""
-    
-    # Create temporary file
+    # Create temporary database file
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
     temp_db_path = temp_file.name
     temp_file.close()
@@ -175,238 +295,165 @@ def create_temp_sqlite_with_data(fetched_data: List[Dict]) -> Tuple[str, Dict[st
     conn = sqlite3.connect(temp_db_path)
     cursor = conn.cursor()
     
-    # Group data by table type/structure
-    tables_data = organize_data_by_structure(fetched_data)
+    # Group data by table type
+    tables = {}
+    for record in data:
+        table_name = record.get('table_type', 'main_data')
+        if table_name not in tables:
+            tables[table_name] = []
+        tables[table_name].append(record)
+    
     table_schemas = {}
     
     # Create tables and insert data
-    for table_name, rows in tables_data.items():
-        if rows:
-            # Create table based on first row structure
-            columns = [col for col in rows[0].keys() if col != 'table_type']
-            column_defs = ", ".join([f'"{col}" TEXT' for col in columns])
+    for table_name, records in tables.items():
+        if not records:
+            continue
             
-            create_sql = f'CREATE TABLE "{table_name}" ({column_defs})'
-            cursor.execute(create_sql)
-            
-            # Store schema info
-            table_schemas[table_name] = columns
-            
-            # Insert data
-            placeholders = ", ".join(["?" for _ in columns])
-            insert_sql = f'INSERT INTO "{table_name}" VALUES ({placeholders})'
-            
-            for row in rows:
-                values = [str(row.get(col, '')) for col in columns]
-                cursor.execute(insert_sql, values)
-    
+        # Get columns from first record, excluding metadata
+        print(f"🛠️ Creating table '{table_name}' with {len(records)} records")
+        print(f"   Sample record: {records[0]}")
+        columns = [col for col in records[0].keys() if col not in ['table_type']]
+        
+        # Create table
+        column_defs = ", ".join([f'"{col}" TEXT' for col in columns])
+        create_sql = f'CREATE TABLE "{table_name}" ({column_defs})'
+        cursor.execute(create_sql)
+        
+        # Insert data
+        placeholders = ", ".join(["?" for _ in columns])
+        insert_sql = f'INSERT INTO "{table_name}" VALUES ({placeholders})'
+        
+        for record in records:
+            values = [str(record.get(col, '')) for col in columns]
+            cursor.execute(insert_sql, values)
+        
+        table_schemas[table_name] = columns
+        
     conn.commit()
     conn.close()
     
-    print(f"📊 Created {len(table_schemas)} temporary tables: {list(table_schemas.keys())}")
+    print(f"📊 Created {len(table_schemas)} tables: {list(table_schemas.keys())}")
     return temp_db_path, table_schemas
 
-def organize_data_by_structure(data: List[Dict]) -> Dict[str, List[Dict]]:
-    """Organize fetched data into logical tables based on structure"""
-    tables = {}
+async def generate_dynamic_sql_query(user_query: str, table_schemas: Dict[str, List[str]], llm) -> str:
+    """Generate SQL query dynamically using LLM"""
     
-    for item in data:
-        # Determine table name based on data structure or metadata
-        table_name = determine_table_name(item)
-        
-        if table_name not in tables:
-            tables[table_name] = []
-        
-        tables[table_name].append(item)
-    
-    return tables
-
-def determine_table_name(item: Dict) -> str:
-    """Determine appropriate table name for data item"""
-    
-    # Check if item has explicit table type
-    if 'table_type' in item:
-        return item['table_type']
-    
-    # Determine based on key patterns
-    keys = set(item.keys())
-    
-    # User-like data
-    if 'email' in keys and 'name' in keys:
-        return 'users'
-    
-    # Order-like data
-    if 'order_id' in keys or ('user_id' in keys and 'amount' in keys):
-        return 'orders'
-    
-    # Product-like data
-    if 'product_id' in keys or 'product_name' in keys:
-        return 'products'
-    
-    # Default fallback
-    if 'id' in keys:
-        return 'main_data'
-    
-    return 'temp_data'
-
-async def generate_sql_from_user_query(user_query: str, table_schemas: Dict[str, List[str]]) -> str:
-    """Generate SQL query based on user input and available table schemas"""
-    
-    # Initialize a model for SQL generation
-    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-    
-    # Create schema description
-    schema_descriptions = []
+    # Create schema description with enum values if applicable
+    schema_desc = []
     for table, columns in table_schemas.items():
-        schema_descriptions.append(f"Table '{table}': {', '.join(columns)}")
-    
-    schema_description = "\n".join(schema_descriptions)
+        col_list = ", ".join([f'"{col}"' for col in columns])
+        schema_desc.append(f"- Table '{table}': Columns: {col_list}")
+
+    schema_text = "\n".join(schema_desc)
+    print(f"📚 Database Schema:\n{schema_text}")
     
     prompt = f"""
-    You are a SQL expert. Generate a SQLite query based on the user's request and available data.
+You are a SQL expert. Generate a SQLite query based on the user's request and database schema.
+
+Database Schema:
+{schema_text}
+
+User Query: "{user_query}"
+
+Requirements:
+1. Use only tables and columns from the schema above
+2. Return ONLY the SQL query, no explanations
+3. Use proper SQLite syntax
+4. Quote table/column names with double quotes if needed
+5. Use JOINs when relating data from multiple tables
+6. Use appropriate WHERE, GROUP BY, ORDER BY clauses
+7. Make the query answer the user's question precisely
+
+Generate the SQL query:
+"""
+
+    start_time = time.time()
+    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    end_time = time.time()
     
-    Available Database Schema:
-    {schema_description}
-    
-    User Request: {user_query}
-    
-    Rules:
-    1. Only use the tables and columns shown above
-    2. Return ONLY the SQL query, no explanation or formatting
-    3. Use proper SQLite syntax
-    4. Quote table and column names with double quotes if needed
-    5. Make sure the query answers the user's question as best as possible
-    6. Use JOINs when relationships between tables are needed
-    7. Use appropriate WHERE clauses, GROUP BY, ORDER BY as needed
-    
-    Generate the SQL query:
-    """
-    
-    response = await model.ainvoke([HumanMessage(content=prompt)])
-    
-    # Extract SQL from response (remove markdown formatting if present)
-    sql_query = response.content if hasattr(response, 'content') else str(response)
+    print(f"🪙 SQL Generation Time: {end_time - start_time:.2f}s")
     
     # Clean up the SQL query
-    if isinstance(sql_query, str):
-        sql_query = sql_query.strip()
-        if sql_query.startswith('```
-            sql_query = sql_query.replace('```sql', '').replace('```
-        elif sql_query.startswith('```'):
-            sql_query = sql_query.replace('```
-    else:
-        sql_query = "SELECT 1"  # Fallback query
+    content = response.content if hasattr(response, 'content') else str(response)
+    sql_query = content.strip()
+    print(f"📝 Raw SQL from LLM: {sql_query}")
+    
+    # Remove markdown formatting
+    if sql_query.startswith('```sqlite'):
+        sql_query = sql_query.replace('```sqlite', '').strip()
+        sql_query = sql_query.replace('```', '').strip()
+    elif sql_query.startswith('```'):
+        sql_query = sql_query.replace('```', '').strip()
     
     return sql_query
 
-def execute_query_on_temp_db(temp_db_path: str, sql_query: str) -> List[Dict]:
-    """Execute SQL query on temporary database and return results"""
+def execute_sql_query(db_path: str, sql_query: str) -> List[Dict[str, Any]]:
+    """Execute SQL query and return results"""
     
-    conn = sqlite3.connect(temp_db_path)
-    conn.row_factory = sqlite3.Row  # Enable dict-like access to rows
+# ❌ SQL Error: You can only execute one statement at a time.
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
     try:
-        cursor.execute(sql_query)
-        rows = cursor.fetchall()
-        
-        # Convert to list of dictionaries
-        result = [dict(row) for row in rows]
-        
-        return result
+        rows = cursor.execute(sql_query)
+        results = [dict(row) for row in rows]
+        return results
         
     except Exception as e:
-        print(f"❌ SQL execution error: {e}")
-        print(f"Query: {sql_query}")
+        print(f"❌ SQL Error: {e}")
         raise e
     finally:
         conn.close()
 
-def cleanup_temp_db(temp_db_path: str):
+def cleanup_temp_database(db_path: str):
     """Remove temporary database file"""
     try:
-        if os.path.exists(temp_db_path):
-            os.unlink(temp_db_path)
+        if os.path.exists(db_path):
+            os.unlink(db_path)
     except Exception as e:
-        print(f"⚠️ Warning: Could not clean up temp file {temp_db_path}: {e}")
+        print(f"⚠️ Cleanup warning: {e}")
 
-# Example usage and testing
-async def run_example_queries():
-    """Run example queries to demonstrate the flow"""
+# Main execution
+async def run_dynamic_examples():
+    """Run examples with fully dynamic tool selection and parameter extraction"""
+    
+    tools_json_path = "agents/db/tools.json"  # Path to your tools.json
     
     test_queries = [
-        "Show me all active users",
-        "What are the total sales by business unit?",
-        "List all orders with user details",
-        "Find users who have made orders",
-        "Show me recent orders with amounts over $100"
+        # "Find all active users",
+        # "Show me users in engineering department", 
+        # "Get active users from sales and marketing",
+        # "Find users created after 2024-01-01"
+        # "List all inactive users",
+        "List all users names and emails",
     ]
     
     for query in test_queries:
-        print(f"\n" + "="*60)
-        print(f"🔍 Processing Query: {query}")
-        print("="*60)
+        print(f"\n{'='*70}")
+        print(f"🔍 Query: {query}")
+        print('='*70)
         
-        result = await process_user_query_flow(query)
+        start_time = time.time()
+        result = await process_dynamic_query_flow(query, tools_json_path)
+        total_time = time.time() - start_time
         
         if result['status'] == 'success':
-            print(f"✅ Generated SQL: {result['generated_sql']}")
-            print(f"📊 Results ({result['row_count']} rows):")
+            print(f"✅ Tool Calls: {result['tool_calls']}")
+            print(f"📊 Generated SQL: {result['generated_sql']}")
+            print(f"📈 Results ({result['row_count']} rows):")
             
-            # Pretty print first few results
             for i, row in enumerate(result['result'][:3]):
-                print(f"   {i+1}: {row}")
+                print(f"   {i+1}. {row}")
             
             if result['row_count'] > 3:
                 print(f"   ... and {result['row_count'] - 3} more rows")
+                
+            print(f"⏱️ Total Time: {total_time:.2f}s")
         else:
             print(f"❌ Error: {result['error']}")
 
-async def interactive_mode():
-    """Interactive mode for testing queries"""
-    
-    print("🔍 Interactive Query Mode")
-    print("Enter your queries and see the SQL generation in action!")
-    print("Type 'quit' to exit\n")
-    
-    while True:
-        try:
-            user_query = input("Query: ")
-            
-            if user_query.lower() in ['quit', 'exit', 'q']:
-                print("Goodbye!")
-                break
-            
-            if not user_query.strip():
-                continue
-                
-            result = await process_user_query_flow(user_query)
-            
-            if result['status'] == 'success':
-                print(f"\n✅ Generated SQL:")
-                print(f"   {result['generated_sql']}")
-                print(f"\n📊 Results ({result['row_count']} rows):")
-                
-                for row in result['result'][:5]:
-                    print(f"   {row}")
-                    
-                if result['row_count'] > 5:
-                    print(f"   ... and {result['row_count'] - 5} more rows")
-            else:
-                print(f"❌ Error: {result['error']}")
-            
-            print()  # Add spacing
-            
-        except KeyboardInterrupt:
-            print("\nGoodbye!")
-            break
-        except Exception as e:
-            print(f"Error: {e}")
-
 if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv == "interactive":[1]
-        asyncio.run(interactive_mode())
-    else:
-        asyncio.run(run_example_queries())
+    # Run the dynamic system
+    asyncio.run(run_dynamic_examples())
