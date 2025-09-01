@@ -23,7 +23,7 @@ async def main():
         # "Give me the names of all users",
         # "How many payments are made"
         # "who all made what payments"
-        "How much does alice pay totally"
+        "How much does alice pay totally, out put in a JSON with the names of payments and final total. Output in JSON format only. Get all the payments she has made."
     ]
     
     for query in test_queries:

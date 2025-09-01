@@ -464,7 +464,7 @@ def build_dynamic_system_prompt() -> str:
 
 **WORKFLOW RULES:**
 1. Always start with plan_data_collection to acknowledge the user query
-2. Next, call collect_and_store_data with a JSON array of tool calls
+2. Next, call collect_and_store_data with a JSON array of tool calls, be sure to specify parameters accurately
 3. Generate SQL query based on the returned database schema and user question
 4. Call execute_sql_query with the database info and your generated SQL
 5. Interpret the SQL results to provide a clear, formatted answer
