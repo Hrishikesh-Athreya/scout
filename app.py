@@ -7,8 +7,8 @@ dotenv.load_dotenv()
 from langchain.globals import set_verbose, set_debug
 
 # Enable verbose logging globally
-set_verbose(True)
-set_debug(True)  # For even more detailed output
+# set_verbose(True)
+# set_debug(True)  # For even more detailed output
 
 async def main():
     """Simple main function using enhanced DB agent"""
@@ -22,7 +22,8 @@ async def main():
         # "How many users are active"
         # "Give me the names of all users",
         # "How many payments are made"
-        "who all made what payments"
+        # "who all made what payments"
+        "How much does alice pay totally"
     ]
     
     for query in test_queries:
