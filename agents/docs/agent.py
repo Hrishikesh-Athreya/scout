@@ -1,12 +1,27 @@
-# agents/docs/agent.py
 from langgraph.prebuilt import create_react_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
-from common.tool_loader import load_tool_specs, build_tools_from_specs
+from langgraph.checkpoint.memory import MemorySaver
+from common.tool_loader import load_tools_from_json
+from common.prompts import get_agent_prompt
 
 def build_docs_agent():
-    specs = load_tool_specs("agents/docs/tools.json")
-    python_tools, _schemas = build_tools_from_specs(specs)
-    model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
-    agent = create_react_agent(model, python_tools)
-    agent.name = "docs_agent"
+    """Build the documents agent from tools.json"""
+    
+    # Load tools from JSON configuration
+    tools = load_tools_from_json("/Users/arnavdewan/Desktop/Repos/scout/agents/docs/tools.json")
+    
+    # Initialize model
+    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    
+    # Get custom prompt for document operations
+    system_prompt = get_agent_prompt("docs")
+    
+    
+    # Create agent with tools
+    agent = create_react_agent(
+        model=model,
+        tools=tools,
+        prompt=system_prompt,
+    )
+    
     return agent

@@ -4,7 +4,7 @@ import re
 from typing import List, Dict, Any, Optional, Type
 import requests
 from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model, validator
 
 def load_tools_from_json(json_file_path: str) -> List[BaseTool]:
     """
@@ -55,30 +55,56 @@ def create_tool_from_config(config: Dict[str, Any]) -> BaseTool:
 
 def create_parameter_model(tool_name: str, schema: Dict[str, Any]) -> Type[BaseModel]:
     """
-    Create a Pydantic model from JSON schema for tool parameters
+    Create a Pydantic model from JSON schema for tool parameters with enum support
     """
     
     properties = schema.get('properties', {})
     required_fields = set(schema.get('required', []))
     
     model_fields = {}
+    validators = {}
     
     for field_name, field_config in properties.items():
         field_type = get_python_type_from_json_type(field_config['type'])
+        description = field_config.get('description', '')
+        
+        # Handle enum fields
+        if 'enum' in field_config:
+            enum_values = field_config['enum']
+            
+            # Create custom validator for enum fields
+            def create_enum_validator(allowed_values):
+                def validate_enum(cls, v):
+                    if v not in allowed_values:
+                        raise ValueError(f"Value must be one of {allowed_values}")
+                    return v
+                return validate_enum
+            
+            validators[f'validate_{field_name}'] = validator(field_name, allow_reuse=True)(
+                create_enum_validator(enum_values)
+            )
         
         # Handle required vs optional fields
         if field_name in required_fields:
-            model_fields[field_name] = (field_type, Field(description=field_config.get('description', '')))
+            model_fields[field_name] = (field_type, Field(description=description))
         else:
-            model_fields[field_name] = (Optional[field_type], Field(default=None, description=field_config.get('description', '')))
+            model_fields[field_name] = (Optional[field_type], Field(default=None, description=description))
     
-    # Create dynamic model
+    # Create dynamic model with validators
     model_name = f"{tool_name.replace('_', ' ').title().replace(' ', '')}Parameters"
-    return create_model(model_name, **model_fields)
+    
+    # Create the model class with validators
+    model_class = create_model(model_name, **model_fields)
+    
+    # Add validators to the model
+    for validator_name, validator_func in validators.items():
+        setattr(model_class, validator_name, validator_func)
+    
+    return model_class
 
 def get_python_type_from_json_type(json_type):
     """
-    Convert JSON schema type to Python type
+    Convert JSON schema type to Python type with enum support
     """
     if isinstance(json_type, list):
         # Handle union types like ["string", "null"]
@@ -206,27 +232,3 @@ def test_tool_from_json(json_file_path: str, tool_name: str, **test_params):
     except Exception as e:
         print(f"Error: {e}")
         return None
-
-if __name__ == "__main__":
-    # Example usage and testing
-    
-    # Test loading tools from your db tools.json
-    try:
-        db_tools = load_tools_from_json("/Users/arnavdewan/Desktop/Repos/scout/agents/db/tools.json")
-        print(f"Loaded {len(db_tools)} database tools:")
-        
-        for tool in db_tools:
-            print(f"  - {tool.name}: {tool.description}")
-        
-        # Test the db_get_users tool
-        if db_tools:
-            test_result = test_tool_from_json(
-                "/Users/arnavdewan/Desktop/Repos/scout/agents/db/tools.json", 
-                "db_get_users", 
-                status="ACTIVE",
-            )
-            
-    except FileNotFoundError:
-        print("db/tools.json not found. Make sure the file exists.")
-    except Exception as e:
-        print(f"Error loading tools: {e}")

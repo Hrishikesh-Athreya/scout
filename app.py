@@ -4,13 +4,10 @@ import os
 import json
 import asyncio
 from typing import Dict, List, Any, Optional, Tuple
-from langgraph.prebuilt import create_react_agent
-from langgraph.checkpoint.memory import MemorySaver
-from langchain.chat_models import init_chat_model
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage
 
 from agents.db.agent import build_db_agent
-from common.tool_loader import load_tools_from_json
-from common.prompts import get_agent_prompt
 
 async def process_user_query_flow(user_input: str) -> Dict[str, Any]:
     """
@@ -25,8 +22,8 @@ async def process_user_query_flow(user_input: str) -> Dict[str, Any]:
         
         # Step 2: Use DB agent to fetch required rows based on user input
         print(f"📊 Fetching data for query: {user_input}")
-        fetch_result = await db_agent.ainvoke({
-            "messages": [{"role": "user", "content": f"Fetch all relevant data for this analysis: {user_input}"}]
+        fetch_result = db_agent.invoke({
+            "messages": [HumanMessage(content=f"Fetch all relevant data for this analysis: {user_input}")]
         })
         
         # Extract the actual data from agent response
@@ -85,44 +82,51 @@ def extract_data_from_agent_response(agent_response: Dict) -> List[Dict]:
             content = last_message.content
             return parse_agent_data_response(content)
     
-    # Fallback - assume direct data structure
-    return agent_response.get('data', [])
+    # Fallback - assume direct data structure or create mock data
+    if 'data' in agent_response:
+        return agent_response['data']
+    
+    # Create mock data for demo
+    return create_mock_data_from_response("")
 
-def parse_agent_data_response(content: str) -> List[Dict]:
+def parse_agent_data_response(content: Any) -> List[Dict]:
     """Parse agent response content to extract structured data"""
     
     try:
-        # Try parsing as direct JSON
-        if content.strip().startswith('[') or content.strip().startswith('{'):
-            return json.loads(content)
+        # Handle string content
+        if isinstance(content, str):
+            # Try parsing as direct JSON
+            if content.strip().startswith('[') or content.strip().startswith('{'):
+                return json.loads(content)
+            
+            # Try to find JSON in the content
+            import re
+            json_pattern = r'``````'
+            json_match = re.search(json_pattern, content, re.DOTALL)
+            
+            if json_match:
+                return json.loads(json_match.group(1))
+            
+            # Try to find any JSON-like structure
+            json_pattern = r'(\[.*\]|\{.*\})'
+            json_match = re.search(json_pattern, content, re.DOTALL)
+            
+            if json_match:
+                return json.loads(json_match.group(1))
         
-        # Try to find JSON in the content
-        import re
-        json_pattern = r'``````'
-        json_match = re.search(json_pattern, content, re.DOTALL)
-        
-        if json_match:
-            return json.loads(json_match.group(1))
-        
-        # Try to find any JSON-like structure
-        json_pattern = r'(\[.*\]|\{.*\})'
-        json_match = re.search(json_pattern, content, re.DOTALL)
-        
-        if json_match:
-            return json.loads(json_match.group(1))
+        # Handle list content
+        elif isinstance(content, list):
+            return content
             
     except (json.JSONDecodeError, AttributeError):
         pass
     
     # If no JSON found, create mock data for demo
-    # In production, you'd want to handle this differently
-    return create_mock_data_from_response(content)
+    return create_mock_data_from_response(str(content))
 
 def create_mock_data_from_response(content: str) -> List[Dict]:
     """Create mock data structure when agent returns unstructured data"""
     
-    # This is a fallback for demo purposes
-    # In production, you'd want your DB agent to return structured data
     return [
         {
             "id": "1",
@@ -249,7 +253,7 @@ async def generate_sql_from_user_query(user_query: str, table_schemas: Dict[str,
     """Generate SQL query based on user input and available table schemas"""
     
     # Initialize a model for SQL generation
-    model = init_chat_model("anthropic:claude-3-5-sonnet-latest")
+    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
     
     # Create schema description
     schema_descriptions = []
@@ -278,14 +282,20 @@ async def generate_sql_from_user_query(user_query: str, table_schemas: Dict[str,
     Generate the SQL query:
     """
     
-    response = await model.ainvoke([{"role": "user", "content": prompt}])
+    response = await model.ainvoke([HumanMessage(content=prompt)])
     
     # Extract SQL from response (remove markdown formatting if present)
-    sql_query = response.content.strip()
-    if sql_query.startswith('```
-        sql_query = sql_query.replace('```sql', '').replace('```
-    elif sql_query.startswith('```'):
-        sql_query = sql_query.replace('```
+    sql_query = response.content if hasattr(response, 'content') else str(response)
+    
+    # Clean up the SQL query
+    if isinstance(sql_query, str):
+        sql_query = sql_query.strip()
+        if sql_query.startswith('```
+            sql_query = sql_query.replace('```sql', '').replace('```
+        elif sql_query.startswith('```'):
+            sql_query = sql_query.replace('```
+    else:
+        sql_query = "SELECT 1"  # Fallback query
     
     return sql_query
 
@@ -352,6 +362,51 @@ async def run_example_queries():
         else:
             print(f"❌ Error: {result['error']}")
 
+async def interactive_mode():
+    """Interactive mode for testing queries"""
+    
+    print("🔍 Interactive Query Mode")
+    print("Enter your queries and see the SQL generation in action!")
+    print("Type 'quit' to exit\n")
+    
+    while True:
+        try:
+            user_query = input("Query: ")
+            
+            if user_query.lower() in ['quit', 'exit', 'q']:
+                print("Goodbye!")
+                break
+            
+            if not user_query.strip():
+                continue
+                
+            result = await process_user_query_flow(user_query)
+            
+            if result['status'] == 'success':
+                print(f"\n✅ Generated SQL:")
+                print(f"   {result['generated_sql']}")
+                print(f"\n📊 Results ({result['row_count']} rows):")
+                
+                for row in result['result'][:5]:
+                    print(f"   {row}")
+                    
+                if result['row_count'] > 5:
+                    print(f"   ... and {result['row_count'] - 5} more rows")
+            else:
+                print(f"❌ Error: {result['error']}")
+            
+            print()  # Add spacing
+            
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+
 if __name__ == "__main__":
-    # Run the example
-    asyncio.run(run_example_queries())
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv == "interactive":[1]
+        asyncio.run(interactive_mode())
+    else:
+        asyncio.run(run_example_queries())

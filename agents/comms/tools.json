@@ -1,47 +1,63 @@
-[
-  {
-    "name": "send_email",
-    "description": "Send an email via the Email API",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "to": {"type": "string"},
-        "subject": {"type": "string"},
-        "body": {"type": "string"}
-      },
-      "required": ["to", "subject", "body"]
+[{
+  "name": "send_email",
+  "description": "Send email messages to recipients.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "to": {"type": "string"},
+      "cc": {"type": ["string","null"]},
+      "bcc": {"type": ["string","null"]},
+      "subject": {"type": "string"},
+      "body": {"type": "string"},
+      "html": {"type": ["boolean","null"]}
     },
-    "execution": {
-      "type": "http",
-      "method": "POST",
-      "url": "https://api.examplemail.com/v1/send",
-      "headers": {
-        "Authorization": "Bearer ${EMAIL_API_KEY}",
-        "Content-Type": "application/json"
-      },
-      "body_map": {}
-    }
+    "required": ["to", "subject", "body"]
   },
-  {
-    "name": "send_slack_message",
-    "description": "Send a Slack message to a channel",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "channel": {"type": "string"},
-        "text": {"type": "string"}
-      },
-      "required": ["channel", "text"]
+  "execution": {
+    "type": "http",
+    "method": "POST",
+    "url": "${EMAIL_API_BASE_URL}/send",
+    "headers": {
+      "Authorization": "Bearer ${EMAIL_API_TOKEN}",
+      "Content-Type": "application/json"
     },
-    "execution": {
-      "type": "http",
-      "method": "POST",
-      "url": "https://slack.com/api/chat.postMessage",
-      "headers": {
-        "Authorization": "Bearer ${SLACK_BOT_TOKEN}",
-        "Content-Type": "application/json"
-      },
-      "body_map": {}
-    }
+    "query_map": {
+      "to": "recipients",
+      "cc": "cc",
+      "bcc": "bcc",
+      "subject": "subject",
+      "body": "body",
+      "html": "isHtml"
+    },
+    "timeout": 30
   }
-]
+}, {
+  "name": "send_slack_message",
+  "description": "Send messages to Slack channels or users.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "channel": {"type": "string"},
+      "text": {"type": "string"},
+      "thread_ts": {"type": ["string","null"]},
+      "blocks": {"type": ["array","null"]}
+    },
+    "required": ["channel", "text"]
+  },
+  "execution": {
+    "type": "http",
+    "method": "POST",
+    "url": "https://slack.com/api/chat.postMessage",
+    "headers": {
+      "Authorization": "Bearer ${SLACK_BOT_TOKEN}",
+      "Content-Type": "application/json"
+    },
+    "query_map": {
+      "channel": "channel",
+      "text": "text",
+      "thread_ts": "thread_ts",
+      "blocks": "blocks"
+    },
+    "timeout": 30
+  }
+}]

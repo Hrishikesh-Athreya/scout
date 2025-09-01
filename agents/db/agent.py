@@ -1,33 +1,35 @@
 from langgraph.prebuilt import create_react_agent
-from langchain.chat_models import init_chat_model
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.globals import set_debug, set_verbose
 from common.tool_loader import load_tools_from_json
 from common.prompts import get_agent_prompt
 
 def build_db_agent():
     """Build the database agent from tools.json"""
     
+    # Enable debugging
+    set_debug(True)  # Shows all internal operations
+    set_verbose(True)  # Shows important events
+    
     # Load tools from JSON configuration
-    tools = load_tools_from_json("db/tools.json")
+    tools = load_tools_from_json("/Users/arnavdewan/Desktop/Repos/scout/agents/db/tools.json")
+    
+    print(f"🔧 Loaded {len(tools)} tools:")
+    for tool in tools:
+        print(f"  - {tool.name}: {tool.description}")
     
     # Initialize model
-    model = init_chat_model(
-        model="gemini-2.5-flash",
-        temperature=0,
-        max_retries=3
-    )
+    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
     
-    # Get custom prompt if available
-    system_prompt = get_agent_prompt("db") or """
-    You are a database agent. Your job is to fetch relevant data based on user queries.
-    Always return structured data that can be easily processed.
-    When fetching data, include all relevant fields that might be useful for analysis.
-    """
+    # Get custom prompt for database operations
+    system_prompt = get_agent_prompt("db")
+    print(f"📝 System prompt: {system_prompt[:100]}...")
     
     # Create agent with tools
     agent = create_react_agent(
         model=model,
         tools=tools,
-        system_prompt=system_prompt
+        prompt=system_prompt
     )
     
     return agent

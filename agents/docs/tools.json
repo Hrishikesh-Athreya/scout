@@ -1,40 +1,55 @@
-[
-  {
-    "name": "pdf_extract_text",
-    "description": "Extract text from a PDF by URL",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "pdf_url": {"type":"string"},
-        "pages": {"type":"string", "description":"Page ranges like 1-3,5"}
-      },
-      "required": ["pdf_url"]
+[{
+  "name": "pdf_extract_text",
+  "description": "Extract text content from PDF documents.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "file_path": {"type": "string"},
+      "pages": {"type": ["string","null"]},
+      "format": {"type": ["string","null"]}
     },
-    "execution": {
-      "type": "http",
-      "method": "POST",
-      "url": "https://api.examplepdf.com/v1/extract",
-      "headers": { "Authorization": "Bearer ${PDF_API_KEY}" },
-      "body_map": {}
-    }
+    "required": ["file_path"]
   },
-  {
-    "name": "pdf_redact",
-    "description": "Redact sensitive text in a PDF and return a new file URL",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "pdf_url": {"type":"string"},
-        "pattern": {"type":"string"}
-      },
-      "required": ["pdf_url","pattern"]
+  "execution": {
+    "type": "http",
+    "method": "POST",
+    "url": "${PDF_API_BASE_URL}/extract",
+    "headers": {
+      "Authorization": "Bearer ${PDF_API_TOKEN}",
+      "Content-Type": "application/json"
     },
-    "execution": {
-      "type": "http",
-      "method": "POST",
-      "url": "https://api.examplepdf.com/v1/redact",
-      "headers": { "Authorization": "Bearer ${PDF_API_KEY}" },
-      "body_map": {}
-    }
+    "query_map": {
+      "file_path": "filePath",
+      "pages": "pages",
+      "format": "outputFormat"
+    },
+    "timeout": 60
   }
-]
+}, {
+  "name": "pdf_generate_report",
+  "description": "Generate PDF reports from templates and data.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "template": {"type": "string"},
+      "data": {"type": "object"},
+      "output_path": {"type": ["string","null"]}
+    },
+    "required": ["template", "data"]
+  },
+  "execution": {
+    "type": "http",
+    "method": "POST",
+    "url": "${PDF_API_BASE_URL}/generate",
+    "headers": {
+      "Authorization": "Bearer ${PDF_API_TOKEN}",
+      "Content-Type": "application/json"
+    },
+    "query_map": {
+      "template": "templateId",
+      "data": "templateData",
+      "output_path": "outputPath"
+    },
+    "timeout": 120
+  }
+}]

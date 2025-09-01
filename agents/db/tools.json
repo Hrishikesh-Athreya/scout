@@ -7,12 +7,20 @@
       "id": {"type": ["string","null"]},
       "name": {"type": ["string","null"]},
       "email": {"type": ["string","null"]},
-      "status": {"type": ["string","null"]},
+      "status": {
+        "type": ["string", "null"],
+        "enum": ["ACTIVE", "INACTIVE"],
+        "description": "User status filter - active, inactive, pending, suspended, or null for all"
+      },
       "createdBefore": {"type": ["string","null"]},
       "createdAfter": {"type": ["string","null"]},
       "updatedBefore": {"type": ["string","null"]},
       "updatedAfter": {"type": ["string","null"]},
-      "businessUnit": {"type": ["string","null"]}
+      "businessUnit": {
+        "type": ["string", "null"],
+        "enum": ["engineering", "sales", "marketing", "hr", "finance", null],
+        "description": "Business unit filter"
+      }
     },
     "required": []
   },
@@ -34,5 +42,4 @@
     },
     "timeout": 30
   }
-}
-]
+}]
