@@ -1,55 +1,31 @@
 [{
-  "name": "pdf_extract_text",
-  "description": "Extract text content from PDF documents.",
+  "name": "create_document",
+  "description": "Create a document using a template and document values.",
   "parameters": {
     "type": "object",
     "properties": {
-      "file_path": {"type": "string"},
-      "pages": {"type": ["string","null"]},
-      "format": {"type": ["string","null"]}
+      "template": {
+        "type": "string",
+        "description": "Template name to use for document creation (e.g., 'template1', 'template2')"
+      },
+      "documentValues": {
+        "type": "object",
+        "description": "Complete document data with all required fields"
+      }
     },
-    "required": ["file_path"]
+    "required": ["template", "documentValues"]
   },
   "execution": {
     "type": "http",
     "method": "POST",
-    "url": "${PDF_API_BASE_URL}/extract",
+    "url": "http://localhost:8081/document/create",
     "headers": {
-      "Authorization": "Bearer ${PDF_API_TOKEN}",
       "Content-Type": "application/json"
     },
-    "query_map": {
-      "file_path": "filePath",
-      "pages": "pages",
-      "format": "outputFormat"
+    "body_map": {
+      "template": "template",
+      "documentValues": "documentValues"
     },
-    "timeout": 60
-  }
-}, {
-  "name": "pdf_generate_report",
-  "description": "Generate PDF reports from templates and data.",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "template": {"type": "string"},
-      "data": {"type": "object"},
-      "output_path": {"type": ["string","null"]}
-    },
-    "required": ["template", "data"]
-  },
-  "execution": {
-    "type": "http",
-    "method": "POST",
-    "url": "${PDF_API_BASE_URL}/generate",
-    "headers": {
-      "Authorization": "Bearer ${PDF_API_TOKEN}",
-      "Content-Type": "application/json"
-    },
-    "query_map": {
-      "template": "templateId",
-      "data": "templateData",
-      "output_path": "outputPath"
-    },
-    "timeout": 120
+    "timeout": 30
   }
 }]
