@@ -5,12 +5,26 @@ import dotenv
 dotenv.load_dotenv()
 
 from langchain.globals import set_verbose, set_debug
-from flask import Flask
+from flask import Flask, request
 app = Flask(__name__)
 
 @app.route('/')
 def hello_world():
     return 'Hello, World!'
+
+# it is a post request with a json body containing the query
+@app.route('/query', methods=['POST'])
+def handle_query():
+    """Handle user query via enhanced DB agent"""
+    body = request.json or {}
+    query = body.get('query', '')
+    result = asyncio.run(process_user_query_with_agent(query))
+    if result['status'] == 'success':
+        return f"✅ Response:\n{result['response']}"
+    else:
+        return f"❌ Error: {result['error']}"
+# curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "How many payments are made"}'
+# curl -X POST http://scout-agent.arnavdewan.dev/query -H "Content-Type: application/json" -d '{"query": "How many payments are made"}'
 
 # async def main():
 #     """Simple main function using enhanced DB agent"""
