@@ -24,7 +24,7 @@ def handle_query():
     else:
         return f"❌ Error: {result['error']}"
 # curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "How many payments are made"}'
-# curl -X POST http://scout-agent.arnavdewan.dev/query -H "Content-Type: application/json" -d '{"query": "How many payments are made"}'
+# curl -X POST https://scout-agent.arnavdewan.dev/query -H "Content-Type: application/json" -d '{"query": "How many payments are made"}'
 
 # async def main():
 #     """Simple main function using enhanced DB agent"""

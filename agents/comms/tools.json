@@ -1,62 +1,66 @@
 [{
-  "name": "send_email",
-  "description": "Send email messages to recipients.",
+  "name": "send_slack_message",
+  "description": "Send a message with file attachment to a Slack channel.",
   "parameters": {
     "type": "object",
     "properties": {
-      "to": {"type": "string"},
-      "cc": {"type": ["string","null"]},
-      "bcc": {"type": ["string","null"]},
-      "subject": {"type": "string"},
-      "body": {"type": "string"},
-      "html": {"type": ["boolean","null"]}
+      "fileUrl": {
+        "type": "string",
+        "description": "URL of the file to send"
+      },
+      "channelId": {
+        "type": "string", 
+        "description": "Slack channel ID (e.g., 'C09BQEU1HCM')"
+      },
+      "threadTs": {
+        "type": ["string", "null"],
+        "description": "Thread timestamp for replying to a thread (optional)"
+      }
     },
-    "required": ["to", "subject", "body"]
+    "required": ["fileUrl", "channelId"]
   },
   "execution": {
     "type": "http",
     "method": "POST",
-    "url": "${EMAIL_API_BASE_URL}/send",
+    "url": "http://localhost:8081/comms/slack",
     "headers": {
-      "Authorization": "Bearer ${EMAIL_API_TOKEN}",
       "Content-Type": "application/json"
     },
-    "query_map": {
-      "to": "recipients",
-      "cc": "cc",
-      "bcc": "bcc",
-      "subject": "subject",
-      "body": "body",
-      "html": "isHtml"
+    "body_map": {
+      "fileUrl": "fileUrl",
+      "channelId": "channelId", 
+      "threadTs": "threadTs"
     },
     "timeout": 30
   }
 }, {
-  "name": "send_slack_message",
-  "description": "Send messages to Slack channels or users.",
+  "name": "send_email_message",
+  "description": "Send a message with file attachment via email to multiple recipients.",
   "parameters": {
     "type": "object",
     "properties": {
-      "channel": {"type": "string"},
-      "text": {"type": "string"},
-      "thread_ts": {"type": ["string","null"]},
-      "blocks": {"type": ["array","null"]}
+      "fileUrl": {
+        "type": "string",
+        "description": "URL of the file to send"
+      },
+      "recipients": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "List of email addresses to send to"
+      }
     },
-    "required": ["channel", "text"]
+    "required": ["fileUrl", "recipients"]
   },
   "execution": {
     "type": "http",
-    "method": "POST",
-    "url": "https://slack.com/api/chat.postMessage",
+    "method": "POST", 
+    "url": "http://localhost:8081/comms/email",
     "headers": {
-      "Authorization": "Bearer ${SLACK_BOT_TOKEN}",
       "Content-Type": "application/json"
     },
-    "query_map": {
-      "channel": "channel",
-      "text": "text",
-      "thread_ts": "thread_ts",
-      "blocks": "blocks"
+    "body_map": {
+      "fileUrl": "fileUrl",
+      "recipients": "recipients"
     },
     "timeout": 30
   }
