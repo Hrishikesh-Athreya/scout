@@ -65,9 +65,18 @@ def handle_query():
 
     result = asyncio.run(process_user_query_with_agent(query))
     if result['status'] == 'success':
-        return f"✅ Response:\n{result['response']}"
+        # return f"✅ Response:\n{result['response']}"
+        # return a success json message
+        return {
+            "status": "success",
+            "response": "Request completed successfully."
+        }
     else:
-        return f"❌ Error: {result['error']}"
+        # return f"❌ Error: {result['error']}"
+        return {
+            "status": "error",
+            "error": result['error']
+        }, 500
 
 
 
