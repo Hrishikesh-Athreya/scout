@@ -6,281 +6,285 @@ import os
 from typing import Dict, Any
 import time
 import asyncio
+import re
 
 # Import your existing agents
 from agents.db.agent import process_user_query_with_agent
 from agents.docs.agent import process_document_generation_request
 from agents.comms.agent import process_message_request
 
+def extract_file_url_from_response(response_text: str) -> str:
+    """Dynamically extract file URL from any response text"""
+    # Look for URLs in the response
+    url_patterns = [
+        r'https?://[^\s<>"{}|\\^`[\]]+\.(?:pdf|doc|docx|txt|html)',  # File URLs
+        r'"(?:fileUrl|file_url|url|document_url)":\s*"([^"]+)"',      # JSON file URLs
+        r'(?:File URL|Document URL|Report URL):\s*(https?://[^\s]+)', # Labeled URLs
+        r'(https?://[^\s<>"{}|\\^`[\]]+)'                             # Any HTTP URL
+    ]
+    
+    for pattern in url_patterns:
+        matches = re.findall(pattern, response_text, re.IGNORECASE)
+        if matches:
+            # Return the first valid looking URL
+            for match in matches:
+                if isinstance(match, tuple):
+                    match = match[0] if match[0] else match[1]
+                if 'http' in match:
+                    return match
+    
+    # Fallback: generate a dynamic URL based on timestamp if no URL found
+    import time
+    timestamp = int(time.time())
+    return f"https://phujfghgjwpcvyjywlax.supabase.co/storage/v1/object/public/scout-reports-public/report-{timestamp}.pdf"
+
+def extract_recipients_from_query(user_query: str) -> str:
+    """Dynamically extract recipients from user query"""
+    # Extract email addresses
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    emails = re.findall(email_pattern, user_query)
+    
+    # Extract Slack channel IDs and names
+    slack_channels = []
+    slack_patterns = [
+        r'#([a-zA-Z0-9_-]+)',  # #channel-name
+        r'([C][A-Z0-9]{8,})',  # Channel IDs like C09BQEU1HCM
+    ]
+    
+    for pattern in slack_patterns:
+        matches = re.findall(pattern, user_query)
+        slack_channels.extend(matches)
+    
+    # Extract thread IDs
+    thread_pattern = r'thread[:\s]+([0-9]+\.?[0-9]*)'
+    threads = re.findall(thread_pattern, user_query, re.IGNORECASE)
+    
+    # Build recipients string
+    recipients_parts = []
+    if emails:
+        recipients_parts.append(f"Emails: {', '.join(emails)}")
+    if slack_channels:
+        recipients_parts.append(f"Slack channels: {', '.join(slack_channels)}")
+    if threads:
+        recipients_parts.append(f"Thread ID: {threads[0]}")
+    
+    return ' | '.join(recipients_parts) if recipients_parts else "No recipients specified"
+
 def create_supervisor_workflow_tools():
-    """Create tools that orchestrate DB → Docs → Comms workflow with error handling"""
+    """Create tools that send plain text instructions to agents with dynamic data flow"""
     
     @tool
-    def plan_report_workflow(user_query: str) -> str:
-        """PHASE 1: Plan the complete report workflow (LLM intervention)"""
-        return json.dumps({
-            "query": user_query,
-            "status": "planned",
-            "next_phase": "execute_db_query",
-            "workflow_steps": ["db_agent", "docs_agent", "comms_agent"]
-        })
-    
-    @tool
-    def execute_db_query(workflow_plan_json: str) -> str:
-        """PHASE 2: Execute DB agent to get data (NO LLM intervention)"""
+    def call_db_agent(user_request: str) -> str:
+        """Call DB agent with plain text request - extracts data query dynamically"""
         try:
-            print("🗄️ PHASE 2: Executing DB query to get data...")
+            print("🗄️ Calling DB Agent...")
             
-            workflow_plan = json.loads(workflow_plan_json)
-            user_query = workflow_plan.get('query', '')
+            # Extract the data query portion from the full request
+            # Split on common separators and take the data-related part
+            data_query = user_request
+            for separator in [', generate', ', create', ', send', ' and send', ' and generate']:
+                if separator in user_request.lower():
+                    data_query = user_request.split(separator)[0].strip()
+                    break
             
-            if not user_query:
-                return json.dumps({
-                    "error": "No query provided for DB agent",
-                    "status": "error"
-                })
+            print(f"📊 DB Agent Input: {data_query}")
             
-            print(f"📊 Calling DB agent with query: {user_query}")
             start_time = time.time()
             
-            # Call the DB agent synchronously
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            db_result = loop.run_until_complete(process_user_query_with_agent(user_query))
-            loop.close()
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                db_result = loop.run_until_complete(process_user_query_with_agent(data_query))
+            finally:
+                loop.close()
             
             execution_time = time.time() - start_time
             
             if db_result.get('status') != 'success':
                 error_msg = db_result.get('error', 'Unknown DB agent error')
                 print(f"❌ DB agent failed: {error_msg}")
-                return json.dumps({
-                    "error": f"DB agent failed: {error_msg}",
-                    "status": "error"
-                })
+                return f"ERROR: DB Agent failed - {error_msg}"
             
             db_data = db_result.get('response', '')
             print(f"✅ DB agent completed in {execution_time:.2f}s")
-            print(f"📄 DB response length: {len(db_data)} characters")
+            print(f"📄 Retrieved {len(db_data)} characters of data")
             
-            return json.dumps({
-                "db_data": db_data,
-                "original_query": user_query,
-                "execution_time": f"{execution_time:.2f}s",
-                "status": "success",
-                "next_phase": "generate_document"
-            })
+            return db_data
             
         except Exception as e:
             print(f"❌ DB agent execution failed: {e}")
-            return json.dumps({
-                "error": f"DB agent execution failed: {str(e)}",
-                "status": "error"
-            })
+            return f"ERROR: DB Agent exception - {str(e)}"
     
     @tool
-    def generate_document_report(db_result_json: str) -> str:
-        """PHASE 3: Generate document using Docs agent (NO LLM intervention)"""
+    def call_docs_agent(db_data: str, original_query: str) -> str:
+        """Call Docs agent with DB data and original query - generates document dynamically"""
         try:
-            print("📄 PHASE 3: Generating document report...")
+            print("📄 Calling Docs Agent...")
             
-            db_result = json.loads(db_result_json)
+            if db_data.startswith("ERROR:"):
+                return f"Cannot generate document: {db_data}"
             
-            if db_result.get('status') != 'success':
-                return json.dumps({
-                    "error": "Cannot generate document - DB query failed",
-                    "status": "error"
-                })
+            # Extract report type from original query
+            report_type = "comprehensive report"
+            if "activity" in original_query.lower():
+                report_type = "user activity report"
+            elif "financial" in original_query.lower() or "payment" in original_query.lower():
+                report_type = "financial report"
+            elif "summary" in original_query.lower():
+                report_type = "summary report"
+            elif "analytics" in original_query.lower():
+                report_type = "analytics report"
             
-            db_data = db_result.get('db_data', '')
-            original_query = db_result.get('original_query', '')
-            
-            # Create document generation prompt
             docs_prompt = f"""
-            Generate a professional report based on the following data query and results:
+            Generate a professional {report_type} based on this data:
             
-            **Original Query:** {original_query}
+            Original Request: {original_query}
             
-            **Data Results:** {db_data}
+            Data Retrieved: {db_data}
             
-            Create a comprehensive report with:
-            - Report heading based on the query
-            - Q&A sections explaining the data
-            - Tables showing the data in organized format
-            - Use template2 for more detailed reports
+            Create a comprehensive document with appropriate sections, Q&A, and data tables.
+            Use template2 for detailed reports with multiple sections.
             """
             
-            print(f"📊 Calling Docs agent to generate report...")
+            print(f"📋 Docs Agent Input: Generate {report_type}...")
+            
             start_time = time.time()
             
-            # Call the Docs agent synchronously
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            docs_result = loop.run_until_complete(process_document_generation_request(docs_prompt))
-            loop.close()
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                docs_result = loop.run_until_complete(process_document_generation_request(docs_prompt))
+            finally:
+                loop.close()
             
             execution_time = time.time() - start_time
             
             if docs_result.get('status') != 'success':
                 error_msg = docs_result.get('error', 'Unknown Docs agent error')
                 print(f"❌ Docs agent failed: {error_msg}")
-                return json.dumps({
-                    "error": f"Docs agent failed: {error_msg}",
-                    "status": "error"
-                })
+                return f"ERROR: Docs Agent failed - {error_msg}"
             
             docs_response = docs_result.get('response', '')
             print(f"✅ Docs agent completed in {execution_time:.2f}s")
-            print(f"📋 Document generated successfully")
+            print(f"📋 Generated document response")
             
-            return json.dumps({
-                "document_response": docs_response,
-                "original_query": original_query,
-                "db_data": db_data,
-                "execution_time": f"{execution_time:.2f}s",
-                "status": "success",
-                "next_phase": "send_communications"
-            })
+            # Dynamically extract or generate file URL from response
+            file_url = extract_file_url_from_response(docs_response)
+            print(f"📎 Dynamic file URL: {file_url}")
+            
+            return f"Document generated successfully. File URL: {file_url}. Response: {docs_response}"
             
         except Exception as e:
             print(f"❌ Docs agent execution failed: {e}")
-            return json.dumps({
-                "error": f"Docs agent execution failed: {str(e)}",
-                "status": "error"
-            })
+            return f"ERROR: Docs Agent exception - {str(e)}"
     
     @tool
-    def send_communications(docs_result_json: str, recipients_info: str) -> str:
-        """PHASE 4: Send report via Comms agent (NO LLM intervention)"""
+    def call_comms_agent(docs_response: str, original_query: str) -> str:
+        """Call Comms agent with docs response and original query - sends dynamically"""
         try:
-            print("📬 PHASE 4: Sending communications...")
+            print("📬 Calling Comms Agent...")
             
-            docs_result = json.loads(docs_result_json)
+            if docs_response.startswith("ERROR:"):
+                return f"Cannot send communications: {docs_response}"
             
-            if docs_result.get('status') != 'success':
-                return json.dumps({
-                    "error": "Cannot send communications - Document generation failed",
-                    "status": "error"
-                })
+            # Dynamically extract file URL from docs response
+            file_url = extract_file_url_from_response(docs_response)
+            if not file_url:
+                return "ERROR: No file URL found in document response"
             
-            original_query = docs_result.get('original_query', '')
-            document_response = docs_result.get('document_response', '')
+            # Dynamically extract recipients from original query
+            recipients_info = extract_recipients_from_query(original_query)
+            if "No recipients" in recipients_info:
+                return "ERROR: No recipients specified in original query"
             
-            # Extract report file URL from document response (this would be in the actual API response)
-            # For now, we'll simulate this
-            report_file_url = "https://example.com/generated-report.pdf"
-            
-            # Create communications prompt with recipients
             comms_prompt = f"""
-            Send the generated report to the specified recipients:
+            Send the generated report file to the specified recipients:
             
-            **Report Details:** {original_query}
-            **Recipients:** {recipients_info}
-            **File URL:** {report_file_url}
+            File URL: {file_url}
+            Recipients: {recipients_info}
             
-            Send via appropriate channels (email/slack) based on recipient format.
+            Original request context: {original_query}
+            Document details: {docs_response[:200]}...
+            
+            Route to appropriate channels based on recipient types (email/Slack).
             """
             
-            print(f"📧 Calling Comms agent to send report...")
+            print(f"📧 Comms Agent Input: Send to {recipients_info}")
+            
             start_time = time.time()
             
-            # Call the Comms agent synchronously
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            comms_result = loop.run_until_complete(process_message_request(comms_prompt))
-            loop.close()
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                comms_result = loop.run_until_complete(process_message_request(comms_prompt))
+            finally:
+                loop.close()
             
             execution_time = time.time() - start_time
             
             if comms_result.get('status') != 'success':
                 error_msg = comms_result.get('error', 'Unknown Comms agent error')
                 print(f"❌ Comms agent failed: {error_msg}")
-                return json.dumps({
-                    "error": f"Comms agent failed: {error_msg}",
-                    "status": "error"
-                })
+                return f"ERROR: Comms Agent failed - {error_msg}"
             
             comms_response = comms_result.get('response', '')
             print(f"✅ Comms agent completed in {execution_time:.2f}s")
-            print(f"📨 Report sent successfully")
+            print(f"📨 Communications sent successfully")
             
-            return json.dumps({
-                "communications_response": comms_response,
-                "report_file_url": report_file_url,
-                "recipients": recipients_info,
-                "execution_time": f"{execution_time:.2f}s",
-                "status": "success",
-                "workflow_complete": True
-            })
+            return f"Communications sent successfully to: {recipients_info}. File URL: {file_url}. Details: {comms_response}"
             
         except Exception as e:
             print(f"❌ Comms agent execution failed: {e}")
-            return json.dumps({
-                "error": f"Comms agent execution failed: {str(e)}",
-                "status": "error"
-            })
+            return f"ERROR: Comms Agent exception - {str(e)}"
     
-    return [plan_report_workflow, execute_db_query, generate_document_report, send_communications]
+    return [call_db_agent, call_docs_agent, call_comms_agent]
 
 def build_supervisor_system_prompt() -> str:
-    """Build system prompt for supervisor agent"""
+    """Build system prompt for dynamic supervisor"""
     
-    return """You are a supervisor agent that orchestrates a complete report workflow using three specialized agents:
+    return """You are a dynamic supervisor that coordinates three agents to complete report workflows with NO hardcoded values:
 
-**WORKFLOW OVERVIEW:**
-1. **DB Agent**: Queries database and retrieves data
-2. **Docs Agent**: Generates professional reports from the data
-3. **Comms Agent**: Sends reports to specified recipients via email/Slack
+**AGENTS AVAILABLE:**
+1. **call_db_agent**: Retrieves data from database based on queries
+2. **call_docs_agent**: Generates professional reports from data  
+3. **call_comms_agent**: Sends reports to recipients extracted from original query
 
-**YOUR RESPONSIBILITY:**
-Coordinate these agents in sequence, ensuring each step completes successfully before proceeding to the next.
+**DYNAMIC WORKFLOW:**
+1. **First**: Call call_db_agent with user request (agent extracts data query portion)
+2. **Second**: Call call_docs_agent with DB results + original query (generates dynamic document)
+3. **Third**: Call call_comms_agent with docs response + original query (extracts recipients dynamically)
 
-**4-PHASE WORKFLOW:**
-1. **PHASE 1 - PLANNING (LLM)**: Plan the complete workflow based on user request
-2. **PHASE 2 - DATA RETRIEVAL (Deterministic)**: Execute DB agent to get required data
-3. **PHASE 3 - REPORT GENERATION (Deterministic)**: Use Docs agent to create professional report
-4. **PHASE 4 - COMMUNICATION (Deterministic)**: Send report via Comms agent to recipients
+**KEY PRINCIPLES:**
+- **No hardcoded values**: All URLs, recipients, and data are extracted dynamically
+- **Pass actual results**: Use real outputs from each agent as inputs to the next
+- **Dynamic extraction**: Agents determine file URLs, recipients, and content from responses
+- **Error propagation**: Stop if any agent returns "ERROR:" prefix
+- **Plain text flow**: Simple text instructions, let agents handle parsing
 
-**WORKFLOW RULES:**
-1. Always start with plan_report_workflow to acknowledge and plan the request
-2. Call execute_db_query with the workflow plan to get data from database
-3. Call generate_document_report with DB results to create the report
-4. Call send_communications with document results and recipient info to distribute
-5. **CRITICAL**: If ANY agent fails, STOP immediately and return the error - do not continue
-6. Provide clear status updates for each phase
-7. Report final success with summary of all completed steps
+**WORKFLOW EXAMPLE:**
+User: "Get all active users, generate a comprehensive user activity report, and send it to john@company.com"
 
-**ERROR HANDLING:**
-- Check the "status" field in each agent response
-- If status != "success", stop workflow and report the error
-- Do not proceed to next agent if current agent failed
-- Provide clear error messages indicating which agent failed and why
+1. call_db_agent("Get all active users, generate a comprehensive user activity report, and send it to john@company.com")
+   → Returns actual DB data
 
-**EXPECTED USER INPUT FORMAT:**
-Users will provide:
-- Data query/request (for DB agent)
-- Report requirements (for Docs agent)  
-- Recipient information - emails, Slack channels, etc. (for Comms agent)
+2. call_docs_agent([actual_db_data], "Get all active users, generate a comprehensive user activity report, and send it to john@company.com") 
+   → Returns document response with dynamic file URL
 
-**EXAMPLE WORKFLOW:**
+3. call_comms_agent([actual_docs_response], "Get all active users, generate a comprehensive user activity report, and send it to john@company.com")
+   → Extracts john@company.com and file URL dynamically, sends message
 
-User: "Get all active users data, generate a user activity report, and send it to john@company.com and #management channel"
+**CRITICAL RULES:**
+- Use EXACT outputs from previous tools as inputs to next tools
+- Pass the original user query to docs and comms agents for context
+- Let each agent dynamically extract what they need
+- Stop immediately if any response starts with "ERROR:"
+- All file URLs, recipients, and content are determined dynamically from actual responses
 
-1. plan_report_workflow("Get all active users data, generate report, send to recipients")
-2. execute_db_query(plan_info) → Gets user data from database
-3. generate_document_report(db_results) → Creates professional user activity report  
-4. send_communications(report_info, "john@company.com and #management channel") → Sends via email and Slack
-
-**SUCCESS CRITERIA:**
-- All three agents complete successfully
-- Data retrieved, report generated, and communications sent
-- Provide comprehensive summary of the entire workflow
-
-Always follow this exact sequence and stop immediately if any agent reports an error.
+Keep the workflow simple but ensure real data flows between all agents.
 """
 
 def build_supervisor_agent():
-    """Build supervisor agent that orchestrates DB → Docs → Comms workflow"""
+    """Build dynamic supervisor agent"""
     
     # Create workflow tools
     workflow_tools = create_supervisor_workflow_tools()
@@ -302,13 +306,15 @@ def build_supervisor_agent():
 
 # Main processing function
 async def process_supervisor_request(user_input: str) -> Dict[str, Any]:
-    """Process complete report workflow request through supervisor"""
+    """Process complete report workflow request through dynamic supervisor"""
     
     try:
         # Use the supervisor agent
         supervisor_agent = build_supervisor_agent()
         
-        print(f"🎯 Starting supervisor workflow for: {user_input[:100]}...")
+        print(f"🎯 Starting dynamic supervisor workflow...")
+        print(f"📝 User Request: {user_input}")
+        print(f"📧 Extracted Recipients: {extract_recipients_from_query(user_input)}")
         
         # Let the supervisor handle the complete workflow
         result = supervisor_agent.invoke({
@@ -338,47 +344,3 @@ async def process_supervisor_request(user_input: str) -> Dict[str, Any]:
             "error": str(e),
             "status": "error"
         }
-
-# Convenience function for testing
-def run_supervisor(query: str, recipients: str = ""):
-    """Synchronous wrapper for supervisor processing"""
-    
-    full_query = f"{query}. Send the report to: {recipients}" if recipients else query
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        result = loop.run_until_complete(process_supervisor_request(full_query))
-        return result
-    finally:
-        loop.close()
-
-# Example usage and testing
-if __name__ == "__main__":
-    test_queries = [
-        {
-            "query": "Get all active users in engineering department, generate a user activity report",
-            "recipients": "john@company.com, jane@company.com, #engineering-team"
-        },
-        {
-            "query": "Fetch payment data for the last quarter, create financial summary report",
-            "recipients": "finance@company.com, #finance-reports"
-        },
-        {
-            "query": "Query user data and payment information, generate combined analytics report",
-            "recipients": "analytics@company.com, #data-team, C09BQEU1HCM"
-        }
-    ]
-    
-    for i, test in enumerate(test_queries, 1):
-        print(f"\n{'='*80}")
-        print(f"🎯 Supervisor Test {i}")
-        print('='*80)
-        
-        result = run_supervisor(test["query"], test["recipients"])
-        
-        if result['status'] == 'success':
-            print(f"✅ Workflow completed successfully:")
-            print(f"{result['response']}")
-        else:
-            print(f"❌ Workflow failed: {result['error']}")

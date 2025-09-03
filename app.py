@@ -1,34 +1,79 @@
-# # Simplified app.py
-# import asyncio
-# from agents.db.agent import process_user_query_with_agent
-# import dotenv
-# dotenv.load_dotenv()
-#
-# from langchain.globals import set_verbose, set_debug
-# from flask import Flask, request
-# app = Flask(__name__)
-#
-# @app.route('/')
-# def hello_world():
-#     return 'Hello, World!'
-#
-# # it is a post request with a json body containing the query
-# @app.route('/query', methods=['POST'])
-# def handle_query():
-#     """Handle user query via enhanced DB agent"""
-#     body = request.json or {}
-#     query = body.get('query', '')
-#     result = asyncio.run(process_user_query_with_agent(query))
-#     if result['status'] == 'success':
-#         return f"✅ Response:\n{result['response']}"
-#     else:
-#         return f"❌ Error: {result['error']}"
-#
+# Simplified app.py
+import asyncio
+from agents.db.agent import process_user_query_with_agent
+import dotenv
+dotenv.load_dotenv()
+
+from langchain.globals import set_verbose, set_debug
+from flask import Flask, request
+app = Flask(__name__)
+
+@app.route('/')
+def hello_world():
+    return 'Hello, World!'
+
+import os
+import sys
+from typing import Dict, Any
+import time
+
+# Add the project root to Python path for imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from supervisor import process_supervisor_request, extract_recipients_from_query, extract_file_url_from_response
+
+@app.route('/query', methods=['POST'])
+def handle_query():
+    """Handle user query via enhanced DB agent"""
+    body = request.json or {}
+    query = body.get('query', '')
+
+
+    print(f"📝 Query: {query}")
+    print(f"📧 Auto-detected Recipients: {extract_recipients_from_query(query)}")
+    print('='*80)
+    
+    test_start_time = time.time()
+    
+    try:
+        # result = await process_supervisor_request(query)
+        result = asyncio.run(process_supervisor_request(query))
+        
+        test_execution_time = time.time() - test_start_time
+        
+        if result.get('status') == 'success':
+            print(f"✅ **DYNAMIC WORKFLOW COMPLETED** ({test_execution_time:.2f}s)")
+            print(f"\n📋 **Final Response:**")
+            response = result.get('response', '')
+            print(response)
+            
+            # Try to extract file URL from response to verify it's dynamic
+            file_url = extract_file_url_from_response(response)
+            if file_url:
+                print(f"\n📎 **Dynamically Extracted File URL:** {file_url}")
+            
+        else:
+            print(f"❌ **WORKFLOW FAILED** ({test_execution_time:.2f}s)")
+            print(f"Error: {result.get('error', 'Unknown error')}")
+            
+            
+    except Exception as e:
+        test_execution_time = time.time() - test_start_time
+        print(f"💥 **EXCEPTION** ({test_execution_time:.2f}s)")
+        print(f"Exception: {str(e)}")
+        
+
+    result = asyncio.run(process_user_query_with_agent(query))
+    if result['status'] == 'success':
+        return f"✅ Response:\n{result['response']}"
+    else:
+        return f"❌ Error: {result['error']}"
 
 
 
 
-# curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "How many payments are made"}'
+
+# curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "Get all the active users, generate a comprehensive user activity report, and send it to arnavdewan.dev@gmail.com"}'
 # curl -X POST https://scout-agent.arnavdewan.dev/query -H "Content-Type: application/json" -d '{"query": "How many payments are made"}'
 
 # async def main():
@@ -208,3 +253,167 @@
 #
 # if __name__ == "__main__":
 #     asyncio.run(test_comms_agent())
+
+# import asyncio
+# import os
+# import sys
+# from typing import Dict, Any
+# import dotenv
+# import time
+#
+# # Load environment variables
+# dotenv.load_dotenv()
+#
+# # Add the project root to Python path for imports
+# sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+#
+# from supervisor import process_supervisor_request, extract_recipients_from_query, extract_file_url_from_response
+#
+# async def test_dynamic_supervisor():
+#     """Test the completely dynamic supervisor"""
+#
+#     print("🎯 Testing Completely Dynamic Supervisor")
+#     print("=" * 80)
+#     print("✨ No hardcoded URLs, all data extracted dynamically from responses")
+#     print("=" * 80)
+#
+#     test_cases = [
+#         "Get all the active users, generate a comprehensive user activity report, and send it to arnavdewan.dev@gmail.com",
+#         # "Fetch payment data for users 1, 2, 3, create financial summary report, and send to finance@company.com, accounting@company.com",
+#         # "Query user information for engineering team, generate team analytics report, and distribute to manager@company.com and #engineering channel",
+#         # "Get all payment records from last quarter, create executive summary, send to ceo@company.com and reply in thread 1756882046.433939 in channel C09BQEU1HCM",
+#         # "Retrieve active user data, make simple user directory, email to hr@company.com and post in #hr-updates channel"
+#     ]
+#
+#     results = []
+#
+#     for i, test_query in enumerate(test_cases, 1):
+#         print(f"\n{'='*80}")
+#         print(f"🎯 DYNAMIC TEST {i}")
+#         print(f"📝 Query: {test_query}")
+#         print(f"📧 Auto-detected Recipients: {extract_recipients_from_query(test_query)}")
+#         print('='*80)
+#
+#         test_start_time = time.time()
+#
+#         try:
+#             result = await process_supervisor_request(test_query)
+#
+#             test_execution_time = time.time() - test_start_time
+#
+#             if result.get('status') == 'success':
+#                 print(f"✅ **DYNAMIC WORKFLOW COMPLETED** ({test_execution_time:.2f}s)")
+#                 print(f"\n📋 **Final Response:**")
+#                 response = result.get('response', '')
+#                 print(response)
+#
+#                 # Try to extract file URL from response to verify it's dynamic
+#                 file_url = extract_file_url_from_response(response)
+#                 if file_url:
+#                     print(f"\n📎 **Dynamically Extracted File URL:** {file_url}")
+#
+#                 results.append({
+#                     "test": f"Test {i}",
+#                     "status": "✅ PASSED",
+#                     "execution_time": f"{test_execution_time:.2f}s"
+#                 })
+#             else:
+#                 print(f"❌ **WORKFLOW FAILED** ({test_execution_time:.2f}s)")
+#                 print(f"Error: {result.get('error', 'Unknown error')}")
+#
+#                 results.append({
+#                     "test": f"Test {i}",
+#                     "status": "❌ FAILED",
+#                     "error": result.get('error'),
+#                     "execution_time": f"{test_execution_time:.2f}s"
+#                 })
+#
+#         except Exception as e:
+#             test_execution_time = time.time() - test_start_time
+#             print(f"💥 **EXCEPTION** ({test_execution_time:.2f}s)")
+#             print(f"Exception: {str(e)}")
+#
+#             results.append({
+#                 "test": f"Test {i}",
+#                 "status": "💥 EXCEPTION",
+#                 "error": str(e),
+#                 "execution_time": f"{test_execution_time:.2f}s"
+#             })
+#
+#     # Print summary
+#     print("\n" + "=" * 80)
+#     print("📊 DYNAMIC SUPERVISOR TEST SUMMARY")
+#     print("=" * 80)
+#
+#     passed = sum(1 for r in results if "✅" in r['status'])
+#     failed = sum(1 for r in results if "❌" in r['status'])
+#     exceptions = sum(1 for r in results if "💥" in r['status'])
+#
+#     print(f"🏁 Total Tests: {len(results)}")
+#     print(f"✅ Successful: {passed}")
+#     print(f"❌ Failed: {failed}")
+#     print(f"💥 Exceptions: {exceptions}")
+#     print(f"📈 Success Rate: {(passed/len(results)*100):.1f}%")
+#
+#     print(f"\n📋 **Results:**")
+#     for i, result in enumerate(results, 1):
+#         status_icon = result['status'].split()[0]
+#         execution_time = result.get('execution_time', 'N/A')
+#         print(f"{i:2d}. {status_icon} {result['test']} ({execution_time})")
+#         if 'error' in result:
+#             print(f"    💬 Error: {result['error']}")
+#
+# async def test_specific_user_case():
+#     """Test the specific case mentioned by the user"""
+#
+#     print("\n" + "=" * 80)
+#     print("🎯 TESTING YOUR SPECIFIC REQUEST")
+#     print("=" * 80)
+#
+#     specific_query = "Get all the active users, generate a comprehensive user activity report, and send it to arnavdewan.dev@gmail.com"
+#
+#     print(f"📝 Query: {specific_query}")
+#     print(f"📧 Dynamic Recipients: {extract_recipients_from_query(specific_query)}")
+#     print("-" * 80)
+#
+#     try:
+#         result = await process_supervisor_request(specific_query)
+#
+#         if result.get('status') == 'success':
+#             print("✅ **SUCCESS - Completely Dynamic Workflow!**")
+#             print("\n📋 **Final Response:**")
+#             response = result.get('response', '')
+#             print(response)
+#
+#             # Show dynamic file URL extraction
+#             file_url = extract_file_url_from_response(response)
+#             if file_url:
+#                 print(f"\n📎 **Dynamic File URL:** {file_url}")
+#                 print("🎉 **No hardcoded values - everything extracted dynamically!**")
+#         else:
+#             print("❌ **FAILED**")
+#             print(f"Error: {result.get('error', 'Unknown error')}")
+#
+#     except Exception as e:
+#         print(f"💥 **EXCEPTION**: {str(e)}")
+#
+# async def main():
+#     """Main test runner for dynamic supervisor"""
+#
+#     print("🚀 DYNAMIC SUPERVISOR - ZERO HARDCODED VALUES")
+#     print("=" * 80)
+#     print("🎯 File URLs extracted from docs agent responses")
+#     print("📧 Recipients extracted from user queries")  
+#     print("📊 Data flows dynamically between all agents")
+#     print("=" * 80)
+#     #
+#     # await test_specific_user_case()
+#     await test_dynamic_supervisor()
+#
+#     print("\n" + "=" * 80)
+#     print("🎉 DYNAMIC TESTING COMPLETE!")
+#     print("✨ All URLs, recipients, and data extracted dynamically!")
+#     print("=" * 80)
+#
+# if __name__ == "__main__":
+#     asyncio.run(main())
