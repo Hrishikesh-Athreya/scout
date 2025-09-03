@@ -7,6 +7,21 @@ from typing import Dict, Any
 import time
 import asyncio
 import re
+import gc
+import psutil
+import os
+
+def monitor_memory():
+    """Monitor memory usage"""
+    process = psutil.Process(os.getpid())
+    memory_mb = process.memory_info().rss / 1024 / 1024
+    print(f"🧠 Memory usage: {memory_mb:.1f} MB")
+    return memory_mb
+
+def cleanup_memory():
+    """Force garbage collection"""
+    gc.collect()
+    print("🗑️ Memory cleanup performed")
 
 # Import your existing agents
 from agents.db.agent import process_user_query_with_agent
@@ -75,8 +90,9 @@ def create_supervisor_workflow_tools():
     
     @tool
     def call_db_agent(user_request: str) -> str:
-        """Call DB agent with plain text request - extracts data query dynamically"""
+        """Call DB agent with memory monitoring"""
         try:
+            monitor_memory()
             print("🗄️ Calling DB Agent...")
             
             # Extract the data query portion from the full request
@@ -109,9 +125,11 @@ def create_supervisor_workflow_tools():
             print(f"✅ DB agent completed in {execution_time:.2f}s")
             print(f"📄 Retrieved {len(db_data)} characters of data")
             
+            cleanup_memory()
             return db_data
             
         except Exception as e:
+            cleanup_memory()
             print(f"❌ DB agent execution failed: {e}")
             return f"ERROR: DB Agent exception - {str(e)}"
     
