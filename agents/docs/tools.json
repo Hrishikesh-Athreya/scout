@@ -1,16 +1,22 @@
 [{
-  "name": "create_document",
-  "description": "Create a document using a template and document values.",
+  "name": "generate_document_report",
+  "description": "Generate a document/report using template1 or template2 with provided content.",
   "parameters": {
     "type": "object",
     "properties": {
       "template": {
         "type": "string",
-        "description": "Template name to use for document creation (e.g., 'template1', 'template2')"
+        "enum": ["template1", "template2"],
+        "description": "Template to use - template1 (3 Q&As) or template2 (4 Q&As)"
       },
       "documentValues": {
         "type": "object",
-        "description": "Complete document data with all required fields"
+        "description": "Complete document content with all fields"
+      },
+      "enablePasswordProtection": {
+        "type": "boolean",
+        "description": "Whether to enable password protection for the document",
+        "default": false
       }
     },
     "required": ["template", "documentValues"]
@@ -18,14 +24,15 @@
   "execution": {
     "type": "http",
     "method": "POST",
-    "url": "http://localhost:8081/document/create",
+    "url": "https://scout-shqtd6.5sc6y6-4.usa-e2.cloudhub.io/document/generate",
     "headers": {
       "Content-Type": "application/json"
     },
     "body_map": {
       "template": "template",
-      "documentValues": "documentValues"
+      "documentValues": "documentValues",
+      "enablePasswordProtection": "enablePasswordProtection"
     },
-    "timeout": 30
+    "timeout": 60
   }
 }]

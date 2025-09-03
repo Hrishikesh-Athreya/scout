@@ -25,28 +25,183 @@ Give me a simple flow that takes in user input -> uses the db agent to fetch the
 ```
 Give me the agent.py and tools.json for a comms agent that sends messages using these apis as tools. It should figure out who to send it to and handle multiple recipients if needed. Send multiple calls if needed to send to all recipients. Mix and match email and slack as needed.
 
-SLACK:
-curl --location 'http://localhost:8081/comms/slack' \
+Slack:
+curl --location 'https://scout-shqtd6.5sc6y6-4.usa-e2.cloudhub.io/comms/slack' \
 --header 'Content-Type: application/json' \
 --data '{
     "fileUrl": "https://phujfghgjwpcvyjywlax.supabase.co/storage/v1/object/public/scout-reports-public/24b2b8e8-9080-4519-9674-d3f3aa7a2ff3.pdf",
     "channelId": "C09BQEU1HCM",
-    "threadTs": "1756882046.433939"
+    "threadId": "1756882046.433939",
+    "channels": ["C09BQEU1HCM", "C09BRGJPQ58"]
 }'
-
-EMAIL:
-curl --location 'http://localhost:8081/comms/email' \
+Email:
+curl --location 'https://scout-shqtd6.5sc6y6-4.usa-e2.cloudhub.io/comms/email' \
 --header 'Content-Type: application/json' \
 --data-raw '{
     "fileUrl": "https://phujfghgjwpcvyjywlax.supabase.co/storage/v1/object/public/scout-reports-public/b75dc19a-dbed-4993-86ff-ebdf8ed1a47d.pdf",
-    "recipients": ["arnavdewan.dev@gmail.com"]
+    "recipients": ["hrishikesha40@gmail.com"]
 }'
 
 ```
 
 
 ```
-Give me the agent.py and tools.json for a report generation agent that uses this api as a tool with optional parameters if needed. We supply it with a prompt to generate a report on and some data, it has to figure out the rest, put in the format the api expects and call the api to get the report back, in the api body if we arent using any fields, keep them empyty
+Give me the agent.py and tools.json for a docs/report generation agent that uses this api as a tool with optional parameters if needed. We supply it with a prompt to generate a report on and some data, it has to figure out the rest, put in the format the api expects and call the api to get the report back, in the api body if we arent using any fields, keep them empyty
 
 
+Template 1 to use:
+curl --location 'https://scout-shqtd6.5sc6y6-4.usa-e2.cloudhub.io/document/generate' \
+--header 'Content-Type: application/json' \
+--data '{
+    "template": "template1",
+    "documentValues": {
+        "reportHeading": "Q&A Section",
+        "heading0": "What is MuleSoft?",
+        "answer0": "MuleSoft is an integration platform.",
+        "heading1": "What is DataWeave?",
+        "answer1": "DataWeave is MuleSoft'\''s transformation language.",
+        "heading2": "Is MuleSoft part of Salesforce?",
+        "answer2": "Yes, it was acquired by Salesforce in 2018."
+        "table0Heading": "Integration Types",
+        "table0Column0": "Type",
+        "table0Column1": "Protocol",
+        "table0Column2": "Format",
+        "table0Column3": "Security",
+        "table0Column4": "Latency",
+        "table0Column5": "Throughput",
+        "table0Column6": "Use Case",
+        "table0Items": [
+            {
+                "value0": "API",
+                "value1": "HTTP",
+                "value2": "JSON",
+                "value3": "OAuth2",
+                "value4": "Low",
+                "value5": "High",
+                "value6": "Public APIs"
+            },
+            {
+                "value0": "File-based",
+                "value1": "FTP",
+                "value2": "CSV",
+                "value3": "None",
+                "value4": "High",
+                "value5": "Medium",
+                "value6": "Batch Transfers"
+            }
+        ],
+        "table1Heading": "Environment Configurations",
+        "table1Column0": "Env",
+        "table1Column1": "URL",
+        "table1Column2": "Username",
+        "table1Column3": "Timeout",
+        "table1Column4": "Retries",
+        "table1Column5": "Logging",
+        "table1Column6": "Notes",
+        "table1Items": [
+            {
+                "value0": "DEV",
+                "value1": "https://dev.example.com",
+                "value2": "devuser",
+                "value3": "30s",
+                "value4": "3",
+                "value5": "Enabled",
+                "value6": "For development use"
+            },
+            {
+                "value0": "PROD",
+                "value1": "https://prod.example.com",
+                "value2": "produser",
+                "value3": "60s",
+                "value4": "5",
+                "value5": "Enabled",
+                "value6": "Live traffic"
+            }
+        ]
+    },
+    "enablePasswordProtection": false
+}'
+
+
+Template 2 to use:
+curl --location 'https://scout-shqtd6.5sc6y6-4.usa-e2.cloudhub.io/document/generate' \
+--header 'Content-Type: application/json' \
+--data '{
+    "template": "template2",
+    "documentValues": {
+        "reportHeading": "Q&A Section",
+        "heading0": "What is MuleSoft?",
+        "answer0": "MuleSoft is an integration platform.",
+        "heading1": "What is DataWeave?",
+        "answer1": "DataWeave is MuleSoft'\''s transformation language.",
+        "heading2": "Is MuleSoft part of Salesforce?",
+        "answer2": "Yes, it was acquired by Salesforce in 2018.",
+        "heading3": "I'\''m 4 years old",
+        "answer3": "You are the youngest person ever",
+        "table0Heading": "Integration Types",
+        "table0Column0": "Type",
+        "table0Column1": "Protocol",
+        "table0Column2": "Format",
+        "table0Column3": "Security",
+        "table0Column4": "Latency",
+        "table0Column5": "Throughput",
+        "table0Column6": "Use Case",
+        "table0Items": [
+            {
+                "value0": "API",
+                "value1": "HTTP",
+                "value2": "JSON",
+                "value3": "OAuth2",
+                "value4": "Low",
+                "value5": "High",
+                "value6": "Public APIs"
+            },
+            {
+                "value0": "File-based",
+                "value1": "FTP",
+                "value2": "CSV",
+                "value3": "None",
+                "value4": "High",
+                "value5": "Medium",
+                "value6": "Batch Transfers"
+            }
+        ],
+        "table1Heading": "Environment Configurations",
+        "table1Column0": "Env",
+        "table1Column1": "URL",
+        "table1Column2": "Username",
+        "table1Column3": "Timeout",
+        "table1Column4": "Retries",
+        "table1Column5": "Logging",
+        "table1Column6": "Notes",
+        "table1Items": [
+            {
+                "value0": "DEV",
+                "value1": "https://dev.example.com",
+                "value2": "devuser",
+                "value3": "30s",
+                "value4": "3",
+                "value5": "Enabled",
+                "value6": "For development use"
+            },
+            {
+                "value0": "PROD",
+                "value1": "https://prod.example.com",
+                "value2": "produser",
+                "value3": "60s",
+                "value4": "5",
+                "value5": "Enabled",
+                "value6": "Live traffic"
+            }
+        ]
+    },
+    "enablePasswordProtection": false
+}'
+
+
+```
+
+
+```
+Now I want a supervisor.py that gets a query for a report and where/who to send it. It plans out which of the agents to call and in what order to get the data from the db and then send it to the right people. It should use the db agent to get the data, then use the docs agent to generate a report on that data, then use the comms agent to send that report to the right people. It should handle errors and stop if any agent fails and return the error message.
 ```

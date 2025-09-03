@@ -45,6 +45,7 @@ def create_comms_workflow_tools():
             # Extract routing information from plan
             file_url = routing_plan.get('fileUrl', '')
             slack_channels = routing_plan.get('slack_channels', [])
+            slack_thread_id = routing_plan.get('slack_thread_id', '')
             email_recipients = routing_plan.get('email_recipients', [])
             
             if not file_url:
@@ -59,15 +60,9 @@ def create_comms_workflow_tools():
             
             execution_log = []
             
-            # Send to Slack channels
-            for channel_info in slack_channels:
-                channel_id = channel_info.get('channelId', '')
-                thread_ts = channel_info.get('threadTs', '')
-                
-                if not channel_id:
-                    continue
-                    
-                print(f"📱 Sending to Slack channel: {channel_id}")
+            # Send to Slack channels (consolidate into single API call)
+            if slack_channels:
+                print(f"📱 Sending to {len(slack_channels)} Slack channels...")
                 start_time = time.time()
                 
                 try:
@@ -78,26 +73,28 @@ def create_comms_workflow_tools():
                     )
                     
                     if slack_tool_config:
+                        # Use new API format with channels array
                         api_response = execute_comms_api_call(slack_tool_config, {
                             'fileUrl': file_url,
-                            'channelId': channel_id,
-                            'threadTs': thread_ts
+                            'channelId': slack_channels[0] if slack_channels else '',
+                            'threadId': slack_thread_id,
+                            'channels': slack_channels
                         })
                         
                         execution_time = time.time() - start_time
                         execution_log.append({
                             "type": "slack",
-                            "channel": channel_id,
-                            "thread_ts": thread_ts,
+                            "channels": slack_channels,
+                            "thread_id": slack_thread_id,
                             "execution_time": f"{execution_time:.2f}s",
                             "status": "success"
                         })
                         
                 except Exception as e:
-                    print(f"❌ Slack send failed for {channel_id}: {e}")
+                    print(f"❌ Slack send failed: {e}")
                     execution_log.append({
                         "type": "slack",
-                        "channel": channel_id,
+                        "channels": slack_channels,
                         "error": str(e),
                         "status": "failed"
                     })
@@ -152,17 +149,17 @@ def create_comms_workflow_tools():
             total_slack = len(slack_channels)
             total_emails = len(email_recipients)
             successful_slack = len([log for log in execution_log if log.get("type") == "slack" and log.get("status") == "success"])
-            successful_email_batches = len([log for log in execution_log if log.get("type") == "email" and log.get("status") == "success"])
+            successful_email_recipients = sum(log.get('recipients_count', 0) for log in execution_log if log.get('type') == 'email' and log.get('status') == 'success')
             
             print(f"✅ Message routing complete!")
-            print(f"📱 Slack: {successful_slack}/{total_slack} channels")
-            print(f"📧 Email: {sum(log.get('recipients_count', 0) for log in execution_log if log.get('type') == 'email' and log.get('status') == 'success')}/{total_emails} recipients")
+            print(f"📱 Slack: {successful_slack} calls for {total_slack} channels")
+            print(f"📧 Email: {successful_email_recipients}/{total_emails} recipients")
             
             return json.dumps({
                 "total_slack_channels": total_slack,
-                "successful_slack_channels": successful_slack,
+                "successful_slack_calls": successful_slack,
                 "total_email_recipients": total_emails,
-                "successful_email_recipients": sum(log.get('recipients_count', 0) for log in execution_log if log.get('type') == 'email' and log.get('status') == 'success'),
+                "successful_email_recipients": successful_email_recipients,
                 "execution_log": execution_log,
                 "status": "success"
             })
@@ -193,6 +190,16 @@ def execute_comms_api_call(tool_config: Dict, params: Dict) -> Dict:
                 request_body[body_key] = param_value
         
         print(f"📋 Request body keys: {list(request_body.keys())}")
+        
+        # Log request details safely
+        if 'slack' in url:
+            channels = request_body.get('channels', [])
+            channel_id = request_body.get('channelId', '')
+            print(f"📱 Slack: channelId={channel_id}, channels={len(channels)}, threadId={request_body.get('threadId', 'none')}")
+        elif 'email' in url:
+            recipients = request_body.get('recipients', [])
+            print(f"📧 Email: {len(recipients)} recipients")
+        
         response = requests.post(url, json=request_body, headers=headers, timeout=timeout)
         
         response.raise_for_status()
@@ -222,10 +229,15 @@ def extract_recipients_from_query(user_query: str) -> Dict:
     channel_name_pattern = r'#([a-zA-Z0-9_-]+)'
     channel_names = re.findall(channel_name_pattern, user_query)
     
+    # Extract thread ID
+    thread_pattern = r'thread[:\s]+([0-9]+\.?[0-9]*)'
+    threads = re.findall(thread_pattern, user_query, re.IGNORECASE)
+    
     return {
         "emails": emails,
         "channel_ids": channels,
-        "channel_names": channel_names
+        "channel_names": channel_names,
+        "thread_ids": threads
     }
 
 def build_comms_system_prompt() -> str:
@@ -260,12 +272,20 @@ def build_comms_system_prompt() -> str:
    - Email addresses (user@domain.com format)
    - Slack channel IDs (C followed by alphanumeric)
    - Slack channel names (#general, #team, etc.)
+   - Thread IDs for Slack thread replies
 3. Call route_and_send_messages with routing plan containing:
-   - fileUrl: The file URL to send
-   - slack_channels: Array of objects with channelId and optional threadTs
+   - fileUrl: The file URL to send (required)
+   - slack_channels: Array of Slack channel IDs
+   - slack_thread_id: Thread ID for replies (optional)
    - email_recipients: Array of email addresses
-4. The system will automatically batch email recipients and send multiple API calls if needed
-5. Provide clear summary of delivery results
+4. The system will automatically batch email recipients and send optimized API calls
+5. Slack API now supports sending to multiple channels in a single call
+6. Provide clear summary of delivery results
+
+**NEW API FEATURES:**
+- **Slack API**: Can send to multiple channels at once using "channels" array parameter
+- **Thread Support**: Uses "threadId" parameter for thread replies
+- **Email API**: Unchanged, supports multiple recipients per call
 
 **AVAILABLE COMMUNICATION TOOLS:**
 {tools_text}
@@ -273,25 +293,28 @@ def build_comms_system_prompt() -> str:
 **RECIPIENT EXTRACTION RULES:**
 - Email: Extract any valid email addresses from the query
 - Slack Channels: Extract channel IDs (C09BQEU1HCM) or channel names (#general)
+- Thread IDs: Extract numeric thread identifiers (1756882046.433939)
 - Multiple Recipients: Send to ALL identified recipients using appropriate channels
-- Batching: Emails are automatically batched for efficient delivery
+- Batching: Emails are automatically batched, Slack channels sent in single call
 
 **EXAMPLE WORKFLOWS:**
 
-User: "Send the report https://example.com/report.pdf to john@company.com, jane@company.com and C09BQEU1HCM"
-1. plan_message_routing("Send the report to john@company.com, jane@company.com and C09BQEU1HCM")
+User: "Send the report to john@company.com, jane@company.com and #general, #development channels"
+1. plan_message_routing("Send the report to email and Slack recipients")
 2. route_and_send_messages({{
    "fileUrl": "https://example.com/report.pdf",
-   "slack_channels": [{{"channelId": "C09BQEU1HCM"}}],
+   "slack_channels": ["C09BQEU1HCM", "C09BRGJPQ58"],
+   "slack_thread_id": "",
    "email_recipients": ["john@company.com", "jane@company.com"]
 }})
 
-User: "Share document https://example.com/document.pdf with team@company.com and reply in thread 1756882046.433939 in C09BQEU1HCM"
-1. plan_message_routing("Share document with team@company.com and reply in thread...")
+User: "Reply in thread 1756882046.433939 in channels C09BQEU1HCM, C09BRGJPQ58 with document"
+1. plan_message_routing("Reply in thread with document")
 2. route_and_send_messages({{
-   "fileUrl": "https://example.com/document.pdf", 
-   "slack_channels": [{{"channelId": "C09BQEU1HCM", "threadTs": "1756882046.433939"}}],
-   "email_recipients": ["team@company.com"]
+   "fileUrl": "https://example.com/document.pdf",
+   "slack_channels": ["C09BQEU1HCM", "C09BRGJPQ58"],
+   "slack_thread_id": "1756882046.433939",
+   "email_recipients": []
 }})
 
 Always follow this exact sequence and provide clear delivery status for each recipient type.

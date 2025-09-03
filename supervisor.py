@@ -1,213 +1,384 @@
-from typing import Dict, List, Any
 from langgraph.prebuilt import create_react_agent
-from langgraph.graph import StateGraph, MessagesState, START, END
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain.globals import set_debug, set_verbose
+from langchain_core.tools import tool
+import json
+import os
+from typing import Dict, Any
 import time
-import dotenv
+import asyncio
 
-from agents.db.agent import build_db_agent
-from agents.docs.agent import build_docs_agent  
-from agents.comms.agent import build_comms_agent
-from common.prompts import get_agent_prompt
+# Import your existing agents
+from agents.db.agent import process_user_query_with_agent
+from agents.docs.agent import process_document_generation_request
+from agents.comms.agent import process_message_request
 
-dotenv.load_dotenv()
-
-def measure_invoke(agent, inputs, config=None):
-    """Wrapper to measure tokens and execution time"""
-    start_time = time.time()
+def create_supervisor_workflow_tools():
+    """Create tools that orchestrate DB → Docs → Comms workflow with error handling"""
     
-    if config is not None:
-        result = agent.invoke(inputs, config)
-    else:
-        result = agent.invoke(inputs)
+    @tool
+    def plan_report_workflow(user_query: str) -> str:
+        """PHASE 1: Plan the complete report workflow (LLM intervention)"""
+        return json.dumps({
+            "query": user_query,
+            "status": "planned",
+            "next_phase": "execute_db_query",
+            "workflow_steps": ["db_agent", "docs_agent", "comms_agent"]
+        })
     
-    end_time = time.time()
-    duration = end_time - start_time
-    
-    # Try to extract token usage from different possible locations
-    tokens_used = None
-    if hasattr(result, 'llm_output') and result.llm_output:
-        token_info = result.llm_output.get('token_usage', {})
-        tokens_used = token_info.get('total_tokens')
-    
-    # Print metrics
-    if tokens_used:
-        print(f"🪙 Tokens: {tokens_used}")
-    print(f"⏱️ Time: {duration:.2f}s")
-    
-    return result
-
-def build_supervisor_agent():
-    """Build the supervisor agent that coordinates other agents"""
-    
-    # Disable verbose debugging for cleaner output
-    set_debug(False)
-    set_verbose(False)
-    
-    # Build specialized agents
-    agents = {
-        "db": build_db_agent(),
-        "docs": build_docs_agent(), 
-        "comms": build_comms_agent()
-    }
-    
-    def supervisor_node(state: MessagesState):
-        """Main supervisor logic"""
-        
-        last_message = state["messages"][-1]
-        user_query = extract_message_content(last_message)
-        
-        # Analyze query to determine which agents to use
-        agent_plan = analyze_query_for_agents(user_query)
-        
-        if len(agent_plan) == 1:
-            # Single agent workflow
-            agent_name = agent_plan[0]
-            agent = agents[agent_name]
+    @tool
+    def execute_db_query(workflow_plan_json: str) -> str:
+        """PHASE 2: Execute DB agent to get data (NO LLM intervention)"""
+        try:
+            print("🗄️ PHASE 2: Executing DB query to get data...")
             
-            # Enhanced query with specific instructions
-            enhanced_query = f"""
-            Please use your available tools to find information about: {user_query}
+            workflow_plan = json.loads(workflow_plan_json)
+            user_query = workflow_plan.get('query', '')
             
-            Requirements:
-            1. Use appropriate filters and parameters
-            2. Return structured data if possible
-            3. If no data found, explain what was searched
-            4. For status queries, use exact values: active, inactive, pending, suspended
-            5. For business units, use: engineering, sales, marketing, hr, finance
+            if not user_query:
+                return json.dumps({
+                    "error": "No query provided for DB agent",
+                    "status": "error"
+                })
+            
+            print(f"📊 Calling DB agent with query: {user_query}")
+            start_time = time.time()
+            
+            # Call the DB agent synchronously
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            db_result = loop.run_until_complete(process_user_query_with_agent(user_query))
+            loop.close()
+            
+            execution_time = time.time() - start_time
+            
+            if db_result.get('status') != 'success':
+                error_msg = db_result.get('error', 'Unknown DB agent error')
+                print(f"❌ DB agent failed: {error_msg}")
+                return json.dumps({
+                    "error": f"DB agent failed: {error_msg}",
+                    "status": "error"
+                })
+            
+            db_data = db_result.get('response', '')
+            print(f"✅ DB agent completed in {execution_time:.2f}s")
+            print(f"📄 DB response length: {len(db_data)} characters")
+            
+            return json.dumps({
+                "db_data": db_data,
+                "original_query": user_query,
+                "execution_time": f"{execution_time:.2f}s",
+                "status": "success",
+                "next_phase": "generate_document"
+            })
+            
+        except Exception as e:
+            print(f"❌ DB agent execution failed: {e}")
+            return json.dumps({
+                "error": f"DB agent execution failed: {str(e)}",
+                "status": "error"
+            })
+    
+    @tool
+    def generate_document_report(db_result_json: str) -> str:
+        """PHASE 3: Generate document using Docs agent (NO LLM intervention)"""
+        try:
+            print("📄 PHASE 3: Generating document report...")
+            
+            db_result = json.loads(db_result_json)
+            
+            if db_result.get('status') != 'success':
+                return json.dumps({
+                    "error": "Cannot generate document - DB query failed",
+                    "status": "error"
+                })
+            
+            db_data = db_result.get('db_data', '')
+            original_query = db_result.get('original_query', '')
+            
+            # Create document generation prompt
+            docs_prompt = f"""
+            Generate a professional report based on the following data query and results:
+            
+            **Original Query:** {original_query}
+            
+            **Data Results:** {db_data}
+            
+            Create a comprehensive report with:
+            - Report heading based on the query
+            - Q&A sections explaining the data
+            - Tables showing the data in organized format
+            - Use template2 for more detailed reports
             """
             
-            result = measure_invoke(agent, {
-                "messages": [HumanMessage(content=enhanced_query)]
+            print(f"📊 Calling Docs agent to generate report...")
+            start_time = time.time()
+            
+            # Call the Docs agent synchronously
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            docs_result = loop.run_until_complete(process_document_generation_request(docs_prompt))
+            loop.close()
+            
+            execution_time = time.time() - start_time
+            
+            if docs_result.get('status') != 'success':
+                error_msg = docs_result.get('error', 'Unknown Docs agent error')
+                print(f"❌ Docs agent failed: {error_msg}")
+                return json.dumps({
+                    "error": f"Docs agent failed: {error_msg}",
+                    "status": "error"
+                })
+            
+            docs_response = docs_result.get('response', '')
+            print(f"✅ Docs agent completed in {execution_time:.2f}s")
+            print(f"📋 Document generated successfully")
+            
+            return json.dumps({
+                "document_response": docs_response,
+                "original_query": original_query,
+                "db_data": db_data,
+                "execution_time": f"{execution_time:.2f}s",
+                "status": "success",
+                "next_phase": "send_communications"
             })
             
-            return {"messages": result["messages"]}
-        else:
-            # Multi-agent workflow
-            results = {}
-            for agent_name in agent_plan:
-                agent = agents[agent_name]
-                result = measure_invoke(agent, {"messages": state["messages"]})
-                results[agent_name] = result
+        except Exception as e:
+            print(f"❌ Docs agent execution failed: {e}")
+            return json.dumps({
+                "error": f"Docs agent execution failed: {str(e)}",
+                "status": "error"
+            })
+    
+    @tool
+    def send_communications(docs_result_json: str, recipients_info: str) -> str:
+        """PHASE 4: Send report via Comms agent (NO LLM intervention)"""
+        try:
+            print("📬 PHASE 4: Sending communications...")
             
-            # Synthesize results
-            synthesized_response = synthesize_multi_agent_results(results, user_query)
-            return {"messages": state["messages"] + [synthesized_response]}
+            docs_result = json.loads(docs_result_json)
+            
+            if docs_result.get('status') != 'success':
+                return json.dumps({
+                    "error": "Cannot send communications - Document generation failed",
+                    "status": "error"
+                })
+            
+            original_query = docs_result.get('original_query', '')
+            document_response = docs_result.get('document_response', '')
+            
+            # Extract report file URL from document response (this would be in the actual API response)
+            # For now, we'll simulate this
+            report_file_url = "https://example.com/generated-report.pdf"
+            
+            # Create communications prompt with recipients
+            comms_prompt = f"""
+            Send the generated report to the specified recipients:
+            
+            **Report Details:** {original_query}
+            **Recipients:** {recipients_info}
+            **File URL:** {report_file_url}
+            
+            Send via appropriate channels (email/slack) based on recipient format.
+            """
+            
+            print(f"📧 Calling Comms agent to send report...")
+            start_time = time.time()
+            
+            # Call the Comms agent synchronously
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            comms_result = loop.run_until_complete(process_message_request(comms_prompt))
+            loop.close()
+            
+            execution_time = time.time() - start_time
+            
+            if comms_result.get('status') != 'success':
+                error_msg = comms_result.get('error', 'Unknown Comms agent error')
+                print(f"❌ Comms agent failed: {error_msg}")
+                return json.dumps({
+                    "error": f"Comms agent failed: {error_msg}",
+                    "status": "error"
+                })
+            
+            comms_response = comms_result.get('response', '')
+            print(f"✅ Comms agent completed in {execution_time:.2f}s")
+            print(f"📨 Report sent successfully")
+            
+            return json.dumps({
+                "communications_response": comms_response,
+                "report_file_url": report_file_url,
+                "recipients": recipients_info,
+                "execution_time": f"{execution_time:.2f}s",
+                "status": "success",
+                "workflow_complete": True
+            })
+            
+        except Exception as e:
+            print(f"❌ Comms agent execution failed: {e}")
+            return json.dumps({
+                "error": f"Comms agent execution failed: {str(e)}",
+                "status": "error"
+            })
     
-    # Create supervisor graph
-    builder = StateGraph(MessagesState)
-    builder.add_node("supervisor", supervisor_node)
-    builder.add_edge(START, "supervisor")
-    builder.add_edge("supervisor", END)
-    
-    # Compile the graph
-    supervisor_graph = builder.compile()
-    
-    return supervisor_graph
+    return [plan_report_workflow, execute_db_query, generate_document_report, send_communications]
 
-def extract_message_content(message) -> str:
-    """Extract content from different message types"""
-    if hasattr(message, 'content'):
-        return message.content
-    elif isinstance(message, dict) and 'content' in message:
-        return message['content']
-    else:
-        return str(message)
+def build_supervisor_system_prompt() -> str:
+    """Build system prompt for supervisor agent"""
+    
+    return """You are a supervisor agent that orchestrates a complete report workflow using three specialized agents:
 
-def analyze_query_for_agents(query: str) -> List[str]:
-    """Analyze user query to determine which agents are needed using llm"""
-    
-    needed_agents = []
+**WORKFLOW OVERVIEW:**
+1. **DB Agent**: Queries database and retrieves data
+2. **Docs Agent**: Generates professional reports from the data
+3. **Comms Agent**: Sends reports to specified recipients via email/Slack
 
-    # Use a language model to determine the agents needed
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-    prompt = f"""
-    You are an expert at classifying user queries into relevant specialized agents.
-    The available agents are:
-    - db: Database agent for fetching and retrieving data
-    - docs: Document agent for PDF and document processing
-    - comms: Communications agent for email and messaging operations
-    Analyze the following user query and determine which agents are needed to fulfill the request.
-    User Query: "{query}"
-    Respond with a comma-separated list of agent names (db, docs, comms) that are relevant.
-    If unsure, default to 'db'.
-    """
-    response = llm.predict_messages([HumanMessage(content=prompt)])
-    response_text = extract_message_content(response).strip().lower()
-    for agent in ['db', 'docs', 'comms']:
-        if agent in response_text:
-            needed_agents.append(agent)
-    if not needed_agents:
-        needed_agents.append('db')
-    # # Simple keyword-based approach (commented out in favor of llm-based)
-    
-    # # Database-related keywords
-    # db_keywords = ['data', 'users', 'orders', 'fetch', 'find', 'search', 'query', 
-    #                'database', 'active', 'show', 'list', 'get', 'sales', 'customers']
-    # if any(keyword in query_lower for keyword in db_keywords):
-    #     needed_agents.append('db')
-    #
-    # # Document-related keywords
-    # doc_keywords = ['pdf', 'document', 'report', 'extract', 'generate', 'template']
-    # if any(keyword in query_lower for keyword in doc_keywords):
-    #     needed_agents.append('docs')
-    #
-    # # Communication-related keywords
-    # comm_keywords = ['email', 'send', 'notify', 'slack', 'message', 'alert']
-    # if any(keyword in query_lower for keyword in comm_keywords):
-    #     needed_agents.append('comms')
-    #
-    # # Default to db if no specific agent identified
-    # if not needed_agents:
-    #     needed_agents.append('db')
-    
-    return needed_agents
+**YOUR RESPONSIBILITY:**
+Coordinate these agents in sequence, ensuring each step completes successfully before proceeding to the next.
 
-def synthesize_multi_agent_results(results: Dict[str, Any], original_query: str) -> AIMessage:
-    """Synthesize results from multiple agents into a cohesive response"""
-    
-    synthesized_content = f"Multi-agent response for: {original_query}\n\n"
-    
-    for agent_name, result in results.items():
-        if 'messages' in result and result['messages']:
-            last_message = result['messages'][-1]
-            content = extract_message_content(last_message)
-            synthesized_content += f"{agent_name.upper()} Agent:\n{content}\n\n"
-    
-    return AIMessage(content=synthesized_content)
+**4-PHASE WORKFLOW:**
+1. **PHASE 1 - PLANNING (LLM)**: Plan the complete workflow based on user request
+2. **PHASE 2 - DATA RETRIEVAL (Deterministic)**: Execute DB agent to get required data
+3. **PHASE 3 - REPORT GENERATION (Deterministic)**: Use Docs agent to create professional report
+4. **PHASE 4 - COMMUNICATION (Deterministic)**: Send report via Comms agent to recipients
 
-def create_multi_agent_system():
-    """Create the complete multi-agent system with supervisor"""
-    return build_supervisor_agent()
+**WORKFLOW RULES:**
+1. Always start with plan_report_workflow to acknowledge and plan the request
+2. Call execute_db_query with the workflow plan to get data from database
+3. Call generate_document_report with DB results to create the report
+4. Call send_communications with document results and recipient info to distribute
+5. **CRITICAL**: If ANY agent fails, STOP immediately and return the error - do not continue
+6. Provide clear status updates for each phase
+7. Report final success with summary of all completed steps
 
+**ERROR HANDLING:**
+- Check the "status" field in each agent response
+- If status != "success", stop workflow and report the error
+- Do not proceed to next agent if current agent failed
+- Provide clear error messages indicating which agent failed and why
+
+**EXPECTED USER INPUT FORMAT:**
+Users will provide:
+- Data query/request (for DB agent)
+- Report requirements (for Docs agent)  
+- Recipient information - emails, Slack channels, etc. (for Comms agent)
+
+**EXAMPLE WORKFLOW:**
+
+User: "Get all active users data, generate a user activity report, and send it to john@company.com and #management channel"
+
+1. plan_report_workflow("Get all active users data, generate report, send to recipients")
+2. execute_db_query(plan_info) → Gets user data from database
+3. generate_document_report(db_results) → Creates professional user activity report  
+4. send_communications(report_info, "john@company.com and #management channel") → Sends via email and Slack
+
+**SUCCESS CRITERIA:**
+- All three agents complete successfully
+- Data retrieved, report generated, and communications sent
+- Provide comprehensive summary of the entire workflow
+
+Always follow this exact sequence and stop immediately if any agent reports an error.
+"""
+
+def build_supervisor_agent():
+    """Build supervisor agent that orchestrates DB → Docs → Comms workflow"""
+    
+    # Create workflow tools
+    workflow_tools = create_supervisor_workflow_tools()
+    
+    # Initialize model  
+    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    
+    # Build system prompt
+    system_prompt = build_supervisor_system_prompt()
+    
+    # Create agent
+    agent = create_react_agent(
+        model=model,
+        tools=workflow_tools,
+        prompt=system_prompt
+    )
+    
+    return agent
+
+# Main processing function
+async def process_supervisor_request(user_input: str) -> Dict[str, Any]:
+    """Process complete report workflow request through supervisor"""
+    
+    try:
+        # Use the supervisor agent
+        supervisor_agent = build_supervisor_agent()
+        
+        print(f"🎯 Starting supervisor workflow for: {user_input[:100]}...")
+        
+        # Let the supervisor handle the complete workflow
+        result = supervisor_agent.invoke({
+            "messages": [{"role": "user", "content": user_input}]
+        })
+        
+        # Extract the final response
+        if result and 'messages' in result and result['messages']:
+            final_message = result['messages'][-1]
+            response_content = final_message.content if hasattr(final_message, 'content') else str(final_message)
+            
+            return {
+                "user_query": user_input,
+                "response": response_content,
+                "status": "success"
+            }
+        else:
+            return {
+                "user_query": user_input,
+                "error": "No response from supervisor",
+                "status": "error"
+            }
+            
+    except Exception as e:
+        return {
+            "user_query": user_input,
+            "error": str(e),
+            "status": "error"
+        }
+
+# Convenience function for testing
+def run_supervisor(query: str, recipients: str = ""):
+    """Synchronous wrapper for supervisor processing"""
+    
+    full_query = f"{query}. Send the report to: {recipients}" if recipients else query
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        result = loop.run_until_complete(process_supervisor_request(full_query))
+        return result
+    finally:
+        loop.close()
+
+# Example usage and testing
 if __name__ == "__main__":
-    supervisor_system = create_multi_agent_system()
-    
     test_queries = [
-        # "Find active users and give me their emails",
-        "Show me all users with status active",
-        # "Get user data from engineering department",
-        # "List recent orders"
+        {
+            "query": "Get all active users in engineering department, generate a user activity report",
+            "recipients": "john@company.com, jane@company.com, #engineering-team"
+        },
+        {
+            "query": "Fetch payment data for the last quarter, create financial summary report",
+            "recipients": "finance@company.com, #finance-reports"
+        },
+        {
+            "query": "Query user data and payment information, generate combined analytics report",
+            "recipients": "analytics@company.com, #data-team, C09BQEU1HCM"
+        }
     ]
     
-    for query in test_queries:
-        print(f"\n{'='*50}")
-        print(f"🔍 Query: {query}")
-        print('='*50)
+    for i, test in enumerate(test_queries, 1):
+        print(f"\n{'='*80}")
+        print(f"🎯 Supervisor Test {i}")
+        print('='*80)
         
-        try:
-            result = measure_invoke(supervisor_system, {
-                "messages": [HumanMessage(content=query)]
-            })
-            
-            if result and 'messages' in result and result['messages']:
-                last_message = result['messages'][-1]
-                content = extract_message_content(last_message)
-                print(f"\n✅ Response:\n{content}")
-            else:
-                print("\n❌ No response received")
-                
-        except Exception as e:
-            print(f"\n❌ Error: {e}")
+        result = run_supervisor(test["query"], test["recipients"])
+        
+        if result['status'] == 'success':
+            print(f"✅ Workflow completed successfully:")
+            print(f"{result['response']}")
+        else:
+            print(f"❌ Workflow failed: {result['error']}")
