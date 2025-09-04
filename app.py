@@ -88,6 +88,9 @@ def handle_query():
 # curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "Get all the active users, generate a comprehensive user activity report, and send it to arnavdewan.dev@gmail.com"}'
 # curl -X POST https://scout-agent.arnavdewan.dev/query -H "Content-Type: application/json" -d '{"query": "Get all the active users, generate a comprehensive user activity report, and send it to arnavdewan.dev@gmail.com"}'
 
+
+# curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "Get the total user signups (last 3 months and send it to arnavdewan.dev@gmail.com)"}'
+
 # async def main():
 #     """Simple main function using enhanced DB agent"""
 #
