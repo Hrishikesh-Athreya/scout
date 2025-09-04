@@ -16,6 +16,7 @@ import os
 import sys
 from typing import Dict, Any
 import time
+import json
 
 # Add the project root to Python path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -26,7 +27,7 @@ from supervisor import process_supervisor_request, extract_recipients_from_query
 def handle_query():
     """Handle user query via enhanced DB agent"""
     body = request.json or {}
-    query = body.get('query', '')
+    query = json.dumps(body)
 
 
     print(f"📝 Query: {query}")
