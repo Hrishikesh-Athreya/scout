@@ -261,6 +261,10 @@ def build_document_system_prompt() -> str:
 3. Never infer, rephrase, or fabricate names, numbers, lists, or examples.
 4. Never duplicate the same content in both Q&A and a table. Content appears in exactly one place.
 5. If an item has multiple rows or multiple columns, use a table. If it’s a single scalar answer, use Q&A.
+6. If the result is a single fact (e.g., "2025-08-31 had 5 signups"), put it ONLY into Q&A (heading + answer).
+7. If the result is a list (multiple rows) OR multiple attributes (multiple columns), put it ONLY into a Table.
+8. Never put a single fact into a Table.
+9. Never put a multi-row/column dataset into Q&A text.
 
 **Validation you must pass before returning a plan**
 1. Each Q&A answer must be a substring of the user input.
