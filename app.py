@@ -1,93 +1,129 @@
-# Simplified app.py
 import asyncio
-from agents.db.agent import process_user_query_with_agent
+import threading
+import time
+import json
+import uuid
+from flask import Flask, request, jsonify
+from concurrent.futures import ThreadPoolExecutor
 import dotenv
+
 dotenv.load_dotenv()
 
-from langchain.globals import set_verbose, set_debug
-from flask import Flask, request
+from supervisor import process_supervisor_request, extract_recipients_from_query
+
 app = Flask(__name__)
+
+# Store task results in memory (use Redis in production)
+task_results = {}
+executor = ThreadPoolExecutor(max_workers=2)
+
+def run_supervisor_task(task_id, query):
+    """Run supervisor task in background"""
+    try:
+        print(f"🚀 Starting task {task_id}")
+        task_results[task_id] = {"status": "running", "progress": "Starting..."}
+        
+        # Run the supervisor request
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(process_supervisor_request(query))
+        finally:
+            loop.close()
+        
+        # Store results
+        if result.get('status') == 'success':
+            task_results[task_id] = {
+                "status": "completed",
+                "result": result.get('response', ''),
+                "execution_time": time.time() - task_results[task_id].get('start_time', time.time())
+            }
+            print(f"✅ Task {task_id} completed successfully")
+        else:
+            task_results[task_id] = {
+                "status": "failed", 
+                "error": result.get('error', 'Unknown error')
+            }
+            print(f"❌ Task {task_id} failed")
+            
+    except Exception as e:
+        task_results[task_id] = {
+            "status": "failed",
+            "error": str(e)
+        }
+        print(f"💥 Task {task_id} exception: {e}")
 
 @app.route('/')
 def hello_world():
-    return 'Hello, World!'
-
-import os
-import sys
-from typing import Dict, Any
-import time
-import json
-
-# Add the project root to Python path for imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from supervisor import process_supervisor_request, extract_recipients_from_query, extract_file_url_from_response
+    return 'Supervisor Agent API - Async Ready!'
 
 @app.route('/query', methods=['POST'])
-def handle_query():
-    """Handle user query via enhanced DB agent"""
-    body = request.json or {}
-    query = json.dumps(body)
-
-
-    print(f"📝 Query: {query}")
-    print(f"📧 Auto-detected Recipients: {extract_recipients_from_query(query)}")
-    print('='*80)
-    
-    test_start_time = time.time()
-    
+def handle_async_query():
+    """Start async query and return task ID immediately"""
     try:
-        # result = await process_supervisor_request(query)
-        result = asyncio.run(process_supervisor_request(query))
+        body = request.json or {}
+        query = json.dumps(body)
         
-        test_execution_time = time.time() - test_start_time
+        if not query:
+            return jsonify({"error": "No query provided"}), 400
         
-        if result.get('status') == 'success':
-            print(f"✅ **DYNAMIC WORKFLOW COMPLETED** ({test_execution_time:.2f}s)")
-            print(f"\n📋 **Final Response:**")
-            response = result.get('response', '')
-            print(response)
-            
-            # Try to extract file URL from response to verify it's dynamic
-            file_url = extract_file_url_from_response(response)
-            if file_url:
-                print(f"\n📎 **Dynamically Extracted File URL:** {file_url}")
-            
-        else:
-            print(f"❌ **WORKFLOW FAILED** ({test_execution_time:.2f}s)")
-            print(f"Error: {result.get('error', 'Unknown error')}")
-            
-            
-    except Exception as e:
-        test_execution_time = time.time() - test_start_time
-        print(f"💥 **EXCEPTION** ({test_execution_time:.2f}s)")
-        print(f"Exception: {str(e)}")
+        # Generate unique task ID
+        task_id = str(uuid.uuid4())
         
-
-    result = asyncio.run(process_user_query_with_agent(query))
-    if result['status'] == 'success':
-        # return f"✅ Response:\n{result['response']}"
-        # return a success json message
-        return {
-            "status": "success",
-            "response": "Request completed successfully."
+        # Initialize task status
+        task_results[task_id] = {
+            "status": "queued",
+            "query": query,
+            "recipients": extract_recipients_from_query(query),
+            "start_time": time.time()
         }
-    else:
-        # return f"❌ Error: {result['error']}"
-        return {
-            "status": "error",
-            "error": result['error']
-        }, 500
+        
+        # Start background task
+        executor.submit(run_supervisor_task, task_id, query)
+        
+        print(f"📋 Started async task {task_id} for query: {query[:50]}...")
+        
+        # Return immediately with task ID
+        return jsonify({
+            "status": "accepted",
+            "task_id": task_id,
+            "message": "Task started successfully",
+            "recipients": extract_recipients_from_query(query),
+            "check_status_url": f"/status/{task_id}"
+        }), 202
+        
+    except Exception as e:
+        print(f"❌ Error starting task: {e}")
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/status/<task_id>', methods=['GET'])
+def get_task_status(task_id):
+    """Check status of async task"""
+    if task_id not in task_results:
+        return jsonify({"error": "Task not found"}), 404
+    
+    task_info = task_results[task_id].copy()
+    
+    # Add runtime if still running
+    if task_info["status"] == "running":
+        task_info["runtime"] = f"{time.time() - task_info.get('start_time', time.time()):.1f}s"
+    
+    return jsonify(task_info)
 
+@app.route('/tasks', methods=['GET'])
+def list_tasks():
+    """List all tasks"""
+    return jsonify({
+        "tasks": [
+            {"task_id": tid, "status": info["status"], "query": info.get("query", "")[:50]}
+            for tid, info in task_results.items()
+        ]
+    })
 
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=8000)
 
-
-
-# gunicorn --config gunicorn.conf.py app:app
-# curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "Get all the active users, generate a comprehensive user activity report, and send it to arnavdewan.dev@gmail.com"}'
-# curl -X POST https://scout-agent.arnavdewan.dev/query -H "Content-Type: application/json" -d '{"query": "Get all the active users, generate a comprehensive user activity report, and send it to arnavdewan.dev@gmail.com"}'
-
+# curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "Get the total user signups (last 3 months and send it to arnavdewan.dev@gmail.com)"}'
 
 # curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "Get the total user signups (last 3 months and send it to arnavdewan.dev@gmail.com)"}'
 

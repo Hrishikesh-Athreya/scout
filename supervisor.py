@@ -280,16 +280,67 @@ def build_supervisor_system_prompt() -> str:
 - **Plain text flow**: Simple text instructions, let agents handle parsing
 
 **WORKFLOW EXAMPLE:**
-User: "Get all active users, generate a comprehensive user activity report, and send it to john@company.com"
+User: "
+{
+    "token": "j3xo4a0g2erf5q0pTD8mRg4n",
+    "team_id": "T09C59PR47K",
+    "api_app_id": "A09BVF1QBL4",
+    "event": {
+        "user": "U09C59PR49F",
+        "type": "app_mention",
+        "ts": "1756276799.001329",
+        "client_msg_id": "ed4216a2-778b-4eb8-ae2b-b1be3c165067",
+        "text": "<@U09BD021PFZ> How many users have signed up in the last 3 months? Can you create a report and reply on this thread?",
+        "team": "T09C59PR47K",
+        "blocks": [
+            {
+                "type": "rich_text",
+                "block_id": "dCYx1",
+                "elements": [
+                    {
+                        "type": "rich_text_section",
+                        "elements": [
+                            {
+                                "type": "user",
+                                "user_id": "U09BD021PFZ"
+                            },
+                            {
+                                "type": "text",
+                                "text": " hello"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "channel": "C09BQEU1HCM",
+        "event_ts": "1756276799.001329"
+    },
+    "type": "event_callback",
+    "event_id": "Ev09CBKEU8J0",
+    "event_time": 1756276799,
+    "authorizations": [
+        {
+            "enterprise_id": null,
+            "team_id": "T09C59PR47K",
+            "user_id": "U09BD021PFZ",
+            "is_bot": true,
+            "is_enterprise_install": false
+        }
+    ],
+    "is_ext_shared_channel": false,
+    "event_context": "4-eyJldCI6ImFwcF9tZW50aW9uIiwidGlkIjoiVDA5QzU5UFI0N0siLCJhaWQiOiJBMDlCVkYxUUJMNCIsImNpZCI6IkMwOUJRRVUxSENNIn0"
+}
+"
 
-1. call_db_agent("Get all active users, generate a comprehensive user activity report, and send it to john@company.com")
+1. call_db_agent("How many users have signed up in the last 3 months? Can you create a report and reply on this thread? Channel C09BQEU1HCM")
    → Returns actual DB data
 
-2. call_docs_agent([actual_db_data], "Get all active users, generate a comprehensive user activity report, and send it to john@company.com") 
+2. call_docs_agent([actual_db_data], "How many users have signed up in the last 3 months? Can you create a report and reply on this thread? Channel C09BQEU1HCM") 
    → Returns document response with dynamic file URL
 
-3. call_comms_agent([actual_docs_response], "Get all active users, generate a comprehensive user activity report, and send it to john@company.com")
-   → Extracts john@company.com and file URL dynamically, sends message
+3. call_comms_agent([actual_docs_response], "How many users have signed up in the last 3 months? Can you create a report and reply on this thread? Channel C09BQEU1HCM")
+   → Extracts recipients dynamically and sends report
 
 **CRITICAL RULES:**
 - Use EXACT outputs from previous tools as inputs to next tools
