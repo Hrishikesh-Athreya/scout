@@ -1,4 +1,4 @@
-Look [HERE](https://github.com/Hrishikesh-Athreya/scout/blob/master/Unlocking-Data-Insights-Introducing-Scout-AI.pdf)
+Presentation [HERE](https://github.com/Hrishikesh-Athreya/scout/blob/master/Unlocking-Data-Insights-Introducing-Scout-AI.pdf)
 
 Look inside the repo for details. View the PPT in the repository for a detailed overview.
 
