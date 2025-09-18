@@ -470,6 +470,47 @@ def build_dynamic_system_prompt() -> str:
 5. Interpret the SQL results to provide a clear, formatted answer
 6. Finally call cleanup_database to clean up
 
+=== DATA SCHEMA (authoritative) ===
+Use these exact tables/columns when you generate SQL.
+Do not invent columns. Prefer snake_case.
+
+USERS(
+  id BIGINT PK,
+  name TEXT,
+  email TEXT,
+  status TEXT ['ACTIVE','INACTIVE'],
+  business_unit TEXT ['INSURANCE','LENDING','MUTUAL_FUNDS'],
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ
+)
+
+PAYMENTS(
+  id BIGINT PK,
+  user_id BIGINT FK -> users(id),
+  payment_provider TEXT ['STRIPE','PLAID'],
+  amount NUMERIC(12,2),
+  payment_type TEXT ['DISBURSEMENT','ONE_TIME_PAYMENT'],
+  status TEXT ['SUCCESS','FAILED'],
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ
+)
+
+Aliases to normalize (from APIs):
+users: businessUnit→business_unit, createdAt→created_at, updatedAt→updated_at
+payments: userId→user_id, paymentProvider/paymentMethod→payment_provider,
+          paymentType→payment_type, paymentDate/createdAt→created_at, updatedAt→updated_at
+users can also be called customers
+
+ADDITIONAL INFORMATION :
+Customer are created in ACTIVE state and they can become INACTIVE later on.
+
+SQL RULES:
+- Always include an explicit time window in WHEREs; use TIMESTAMPTZ with full offset.
+- Prefer joins: payments.user_id = users.id.
+- Bucket months using date_trunc with an explicit time zone when needed.
+- Never reference columns not in the schema.
+- updated at is when the data was last updated. 
+
 **AVAILABLE API TOOLS (for phase 2):**
 {tools_text}
 

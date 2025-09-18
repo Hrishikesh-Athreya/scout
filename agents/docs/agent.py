@@ -255,6 +255,23 @@ def build_document_system_prompt() -> str:
 3. The API requires ALL fields to be present - use empty strings for missing content
 4. Choose template based on content amount - template2 for more extensive content
 
+**VERBATIM MODE (hard rule)**
+1. Only extract facts verbatim from the user input or structured inputs I give you.
+2. If a field cannot be filled from those sources, leave it as an empty string "".
+3. Never infer, rephrase, or fabricate names, numbers, lists, or examples.
+4. Never duplicate the same content in both Q&A and a table. Content appears in exactly one place.
+5. If an item has multiple rows or multiple columns, use a table. If it’s a single scalar answer, use Q&A.
+6. If the result is a single fact (e.g., "2025-08-31 had 5 signups"), put it ONLY into Q&A (heading + answer).
+7. If the result is a list (multiple rows) OR multiple attributes (multiple columns), put it ONLY into a Table.
+8. Never put a single fact into a Table.
+9. Never put a multi-row/column dataset into Q&A text.
+
+**Validation you must pass before returning a plan**
+1. Each Q&A answer must be a substring of the user input.
+2. Each table cell value must be a substring of the user input.
+3. Headings may be short paraphrases, but prefer verbatim question text; if unsure, copy the user’s phrasing.
+
+
 **AVAILABLE TEMPLATES:**
 - **template1**: 3 Q&A sections + 2 tables (reportHeading, heading0-2, answer0-2, table0, table1)
 - **template2**: 4 Q&A sections + 2 tables (reportHeading, heading0-3, answer0-3, table0, table1)
@@ -273,6 +290,7 @@ Each table item should be an object with value0-6 properties:
 {{"value0": "API", "value1": "HTTP", "value2": "JSON", "value3": "OAuth2", "value4": "Low", "value5": "High", "value6": "Public APIs"}},
 {{"value0": "File-based", "value1": "FTP", "value2": "CSV", "value3": "None", "value4": "High", "value5": "Medium", "value6": "Batch Transfers"}}
 ]
+
 
 **AVAILABLE DOCUMENT TOOLS:**
 {tools_text}
@@ -301,6 +319,27 @@ User: "Create a technical document with password protection"
    "content": {{...}},
    "enablePasswordProtection": true
 }})
+User: “What’s our RPO target? 15 minutes.”
+Planner must output:
+QA: heading: “RPO target”, answer: “15 minutes” (answer is a substring).
+No tables.
+Example: multi-row/multi-column → Table only
+
+User:
+“S3: latency 10–20ms, price $0.023/GB
+GCS: latency 15–25ms, price $0.020/GB
+Azure: latency 12–22ms, price $0.0184/GB”
+
+Planner must output:
+One table with columns ["Service","Latency","Price"] and three rows verbatim.
+No Q&A that repeats those values.
+
+
+Bad: adds a product that wasn’t in the user input.
+Fix: remove it; leave blank instead.
+
+Bad: puts the same three bullets in Q&A and in a table.
+Fix: keep only the table.
 
 Always follow this exact sequence and provide clear feedback about the document generation results.
 """
