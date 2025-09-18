@@ -1,3 +1,24 @@
+Look inside the repo for details. View the PPT in the repository for a detailed overview.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ```
 agents/
 comms/
@@ -205,3 +226,19 @@ curl --location 'https://scout-shqtd6.5sc6y6-4.usa-e2.cloudhub.io/document/gener
 ```
 Now I want a supervisor.py that gets a query for a report and where/who to send it. It plans out which of the agents to call and in what order to get the data from the db and then send it to the right people. It should use the db agent to get the data, then use the docs agent to generate a report on that data, then use the comms agent to send that report to the right people. It should handle errors and stop if any agent fails and return the error message.
 ```
+
+
+🚀Inspiration
+While working in enterprises like PayPal, Oracle, and Navi, we saw firsthand how much time and money teams lose to reporting overhead. Across engineering, product, and business teams, thousands of hours are wasted every year on one-off data requests, status checks, and report generation. Engineers lose focus context-switching to run ad-hoc queries, analysts get buried under repetitive asks, and product managers wait days for answers to simple questions. The result: bottlenecks, slower decisions, and stalled momentum.
+
+That’s why we built Scout, your AI Business Intelligence Teammate. Scout lives in Slack and understands plain English, so anyone can query data, explore metrics, or generate insights without SQL or waiting in line. “Just ask Scout” and unblock your team to focus on building, analyzing, and innovating
+
+What it does
+Scout empowers engineering, product, and business teams with natural language data access, seamless reporting, and secure delivery, all from within Slack.
+
+Key features :
+1. Natural Language Data Querying No SQL. No schema knowledge. Just ask in plain English. Scout leverages connected MCP servers to understand context and retrieve the right data instantly, freeing employees from database complexity.
+
+2. Report Generation & Security Turn raw data into professional, shareable reports in seconds. With built-in encryption and password protection, sensitive information stays secure.
+
+3. Omnichannel Delivery Share insights where your team works. Scout delivers reports directly to Slack or email — whether for teammates, stakeholders, or external partners.
