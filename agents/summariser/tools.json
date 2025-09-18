@@ -1,0 +1,69 @@
+[
+  {
+    "name": "get_slack_messages",
+    "description": "Get messages from Slack channel via MCP server",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "channel_id": {
+          "type": "string", 
+          "description": "Slack channel ID (e.g., C09BQEU1HCM)"
+        },
+        "hours_back": {
+          "type": "integer",
+          "description": "Hours back to fetch messages (default: 24)"
+        }
+      },
+      "required": ["channel_id"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "POST", 
+      "url": "http://your-mcp-server:port/slack/messages",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body_map": {
+        "channel_id": "channel_id",
+        "hours_back": "hours_back"
+      },
+      "timeout": 30
+    }
+  },
+  {
+    "name": "create_notion_rca",
+    "description": "Create Notion RCA document via MCP server (auto-posts to Slack)",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "description": "Original Slack channel ID for posting notification"
+        },
+        "template": {
+          "type": "object", 
+          "description": "RCA template structure with sections"
+        },
+        "title": {
+          "type": "string",
+          "description": "RCA document title"
+        }
+      },
+      "required": ["channel_id", "template", "title"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "POST",
+      "url": "http://your-mcp-server:port/notion/create-rca",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body_map": {
+        "channel_id": "slack_channel_id",
+        "template": "rca_template",
+        "title": "document_title"
+      },
+      "timeout": 45
+    }
+  }
+]

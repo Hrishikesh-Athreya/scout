@@ -27,6 +27,8 @@ def cleanup_memory():
 from agents.db.agent import process_user_query_with_agent
 from agents.docs.agent import process_document_generation_request
 from agents.comms.agent import process_message_request
+from agents.summariser.agent import process_summariser_request
+
 
 def extract_file_url_from_response(response_text: str) -> str:
     """Dynamically extract file URL from any response text"""
@@ -254,103 +256,92 @@ def create_supervisor_workflow_tools():
         except Exception as e:
             print(f"❌ Comms agent execution failed: {e}")
             return f"ERROR: Comms Agent exception - {str(e)}"
-    
-    return [call_db_agent, call_docs_agent, call_comms_agent]
+
+
+    # Add this tool to your create_supervisor_workflow_tools() function
+    @tool
+    def call_summariser_agent(user_request: str) -> str:
+        """Call Summariser agent for RCA document generation via MCP server"""
+        try:
+            print("Calling Summariser Agent (MCP)...")
+            
+            start_time = time.time()
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                summariser_result = loop.run_until_complete(process_summariser_request(user_request))
+            finally:
+                loop.close()
+            
+            execution_time = time.time() - start_time
+            
+            if summariser_result.get("status") != "success":
+                error_msg = summariser_result.get("error", "Unknown Summariser agent error")
+                print(f"Summariser agent failed: {error_msg}")
+                return f"ERROR: Summariser Agent failed - {error_msg}"
+            
+            summariser_response = summariser_result.get("response", "")
+            print(f"Summariser agent completed in {execution_time:.2f}s")
+            
+            return summariser_response
+            
+        except Exception as e:
+            print(f"Summariser agent execution failed: {e}")
+            return f"ERROR: Summariser Agent exception - {str(e)}"
+
+    return [call_db_agent, call_docs_agent, call_comms_agent, call_summariser_agent]
 
 def build_supervisor_system_prompt() -> str:
     """Build system prompt for dynamic supervisor"""
-    
-    return """You are a dynamic supervisor that coordinates three agents to complete report workflows with NO hardcoded values:
+    return """You are a dynamic supervisor that coordinates four agents to complete different workflows with NO hardcoded values.
 
 **AGENTS AVAILABLE:**
-1. **call_db_agent**: Retrieves data from database based on queries
-2. **call_docs_agent**: Generates professional reports from data  
-3. **call_comms_agent**: Sends reports to recipients extracted from original query
+1. **call_db_agent** - Retrieves data from database based on queries
+2. **call_docs_agent** - Generates professional reports from data  
+3. **call_comms_agent** - Sends reports to recipients extracted from original query
+4. **call_summariser_agent** - Creates RCA documents from Slack conversations via MCP server
 
-**DYNAMIC WORKFLOW:**
-1. **First**: Call call_db_agent with user request (agent extracts data query portion)
-2. **Second**: Call call_docs_agent with DB results + original query (generates dynamic document)
-3. **Third**: Call call_comms_agent with docs response + original query (extracts recipients dynamically)
+**WORKFLOW TYPES:**
+
+**STANDARD REPORT WORKFLOW (3-step):**
+1. First: Call `call_db_agent` with user request (agent extracts data query portion)
+2. Second: Call `call_docs_agent` with DB results + original query (generates dynamic document)  
+3. Third: Call `call_comms_agent` with docs response + original query (extracts recipients dynamically)
+
+**RCA WORKFLOW (1-step):**
+- Call `call_summariser_agent` directly for RCA requests (handles complete MCP workflow)
+
+**REQUEST ROUTING:**
+- **RCA requests**: "create RCA", "generate RCA", "incident summary", "root cause analysis" → Use `call_summariser_agent`
+- **Report requests**: "create report", "generate report", "send data", "analytics" → Use 3-step workflow (DB → Docs → Comms)
 
 **KEY PRINCIPLES:**
-- **No hardcoded values**: All URLs, recipients, and data are extracted dynamically
-- **Pass actual results**: Use real outputs from each agent as inputs to the next
-- **Dynamic extraction**: Agents determine file URLs, recipients, and content from responses
-- **Error propagation**: Stop if any agent returns "ERROR:" prefix
-- **Plain text flow**: Simple text instructions, let agents handle parsing
+- No hardcoded values - All URLs, recipients, and data are extracted dynamically
+- Pass actual results - Use real outputs from each agent as inputs to the next
+- Dynamic extraction - Agents determine file URLs, recipients, and content from responses  
+- Error propagation - Stop if any agent returns ERROR prefix
+- Plain text flow - Simple text instructions, let agents handle parsing
 
-**WORKFLOW EXAMPLE:**
-User: "
-{
-    "token": "j3xo4a0g2erf5q0pTD8mRg4n",
-    "team_id": "T09C59PR47K",
-    "api_app_id": "A09BVF1QBL4",
-    "event": {
-        "user": "U09C59PR49F",
-        "type": "app_mention",
-        "ts": "1756276799.001329",
-        "client_msg_id": "ed4216a2-778b-4eb8-ae2b-b1be3c165067",
-        "text": "<@U09BD021PFZ> How many users have signed up in the last 3 months? Can you create a report and reply on this thread?",
-        "team": "T09C59PR47K",
-        "blocks": [
-            {
-                "type": "rich_text",
-                "block_id": "dCYx1",
-                "elements": [
-                    {
-                        "type": "rich_text_section",
-                        "elements": [
-                            {
-                                "type": "user",
-                                "user_id": "U09BD021PFZ"
-                            },
-                            {
-                                "type": "text",
-                                "text": " hello"
-                            }
-                        ]
-                    }
-                ]
-            }
-        ],
-        "channel": "C09BQEU1HCM",
-        "event_ts": "1756276799.001329"
-    },
-    "type": "event_callback",
-    "event_id": "Ev09CBKEU8J0",
-    "event_time": 1756276799,
-    "authorizations": [
-        {
-            "enterprise_id": null,
-            "team_id": "T09C59PR47K",
-            "user_id": "U09BD021PFZ",
-            "is_bot": true,
-            "is_enterprise_install": false
-        }
-    ],
-    "is_ext_shared_channel": false,
-    "event_context": "4-eyJldCI6ImFwcF9tZW50aW9uIiwidGlkIjoiVDA5QzU5UFI0N0siLCJhaWQiOiJBMDlCVkYxUUJMNCIsImNpZCI6IkMwOUJRRVUxSENNIn0"
-}
-"
+**RCA WORKFLOW EXAMPLE:**
+User: "Create RCA for channel C09BQEU1HCM from last 8 hours"
+→ `call_summariser_agent("Create RCA for channel C09BQEU1HCM from last 8 hours")`
+→ MCP server fetches Slack messages, creates Notion doc, posts link back to Slack
 
-1. call_db_agent("How many users have signed up in the last 3 months? Can you create a report and reply on this thread? Channel C09BQEU1HCM")
-   → Returns actual DB data
-
-2. call_docs_agent([actual_db_data], "How many users have signed up in the last 3 months? Can you create a report and reply on this thread? Channel C09BQEU1HCM") 
-   → Returns document response with dynamic file URL
-
-3. call_comms_agent([actual_docs_response], "How many users have signed up in the last 3 months? Can you create a report and reply on this thread? Channel C09BQEU1HCM")
-   → Extracts recipients dynamically and sends report
+**REPORT WORKFLOW EXAMPLE:**  
+User: "How many users signed up in the last 3 months? Send report to channel C09BQEU1HCM"
+1. `call_db_agent("How many users signed up in the last 3 months? Send report to channel C09BQEU1HCM")` → Returns actual DB data
+2. `call_docs_agent(actual_db_data, original_query)` → Returns document response with dynamic file URL
+3. `call_comms_agent(actual_docs_response, original_query)` → Extracts recipients dynamically and sends report
 
 **CRITICAL RULES:**
 - Use EXACT outputs from previous tools as inputs to next tools
 - Pass the original user query to docs and comms agents for context
 - Let each agent dynamically extract what they need
-- Stop immediately if any response starts with "ERROR:"
+- Stop immediately if any response starts with ERROR
+- Route to correct workflow based on request type (RCA vs Report)
 - All file URLs, recipients, and content are determined dynamically from actual responses
 
-Keep the workflow simple but ensure real data flows between all agents.
-"""
+Choose the appropriate workflow based on the user's request type and ensure real data flows between all agents."""
 
 def build_supervisor_agent():
     """Build dynamic supervisor agent"""
